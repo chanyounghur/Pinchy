@@ -1,4 +1,13 @@
-//! Thin OS-specific helpers: which app is in front, and re-activating it.
+//! Thin OS-specific helpers: which app is in front, re-activating it, and
+//! which screen the cursor is on.
+
+/// Logical coordinates, top-left origin (what Tauri's `LogicalPosition` expects).
+pub struct WorkArea {
+    pub x: f64,
+    pub y: f64,
+    pub w: f64,
+    pub h: f64,
+}
 
 #[cfg(target_os = "macos")]
 pub fn frontmost_app() -> Option<(i32, String)> {
@@ -20,6 +29,47 @@ pub fn activate_app(pid: i32) {
     }
 }
 
+/// Brings this app to the front so the panel's webview gets keyboard focus.
+#[cfg(target_os = "macos")]
+pub fn activate_self() {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::NSApplication;
+    if let Some(mtm) = MainThreadMarker::new() {
+        NSApplication::sharedApplication(mtm).activate();
+    }
+}
+
+/// Work area of the screen under the mouse cursor. tao's `cursor_position`
+/// mixes physical and logical units, which picks the wrong screen on mixed-DPI
+/// setups, so this asks AppKit directly.
+#[cfg(target_os = "macos")]
+pub fn cursor_screen_work_area() -> Option<WorkArea> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSEvent, NSScreen};
+    let mtm = MainThreadMarker::new()?;
+    let screens = NSScreen::screens(mtm);
+    // AppKit's global coordinates have the primary screen at origin, y up.
+    let primary_height = screens.firstObject()?.frame().size.height;
+    let p = NSEvent::mouseLocation();
+    let screen = screens
+        .iter()
+        .find(|s| {
+            let f = s.frame();
+            p.x >= f.origin.x
+                && p.x < f.origin.x + f.size.width
+                && p.y >= f.origin.y
+                && p.y < f.origin.y + f.size.height
+        })
+        .or_else(|| NSScreen::mainScreen(mtm))?;
+    let v = screen.visibleFrame();
+    Some(WorkArea {
+        x: v.origin.x,
+        y: primary_height - (v.origin.y + v.size.height),
+        w: v.size.width,
+        h: v.size.height,
+    })
+}
+
 #[cfg(not(target_os = "macos"))]
 pub fn frontmost_app() -> Option<(i32, String)> {
     None
@@ -27,3 +77,11 @@ pub fn frontmost_app() -> Option<(i32, String)> {
 
 #[cfg(not(target_os = "macos"))]
 pub fn activate_app(_pid: i32) {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn activate_self() {}
+
+#[cfg(not(target_os = "macos"))]
+pub fn cursor_screen_work_area() -> Option<WorkArea> {
+    None
+}

@@ -120,7 +120,7 @@ pub fn run() {
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
                 if window.label() == panel::WINDOW {
-                    panel::hide(window.app_handle());
+                    panel::request_hide(window.app_handle());
                 }
             }
         })

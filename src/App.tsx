@@ -15,6 +15,8 @@ type Item = {
   created_at: number;
 };
 
+const SLIDE_MS = 180;
+
 const KIND_LABEL: Record<Item["kind"], string> = {
   text: "텍스트",
   link: "링크",
@@ -36,6 +38,8 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [open, setOpen] = useState(false);
+  const openRef = useRef(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -49,28 +53,46 @@ export default function App() {
     refresh(query);
   }, [query, refresh]);
 
+  // Slide out, then run `after` (defaults to hiding the window).
+  const close = useCallback((after: () => void = () => invoke("hide_panel")) => {
+    if (!openRef.current) return;
+    openRef.current = false;
+    setOpen(false);
+    window.setTimeout(after, SLIDE_MS);
+  }, []);
+
   useEffect(() => {
+    const focusInput = () => inputRef.current?.focus();
+    window.addEventListener("focus", focusInput);
     const unlisteners = [
       listen("clipboard-changed", () => refresh(query)),
       listen("panel-shown", () => {
         setQuery("");
         setSelected(0);
         refresh("");
-        inputRef.current?.focus();
+        requestAnimationFrame(() => {
+          openRef.current = true;
+          setOpen(true);
+          focusInput();
+        });
       }),
+      listen("panel-hide", () => close()),
     ];
     return () => {
+      window.removeEventListener("focus", focusInput);
       unlisteners.forEach((u) => u.then((f) => f()));
     };
-  }, [query, refresh]);
+  }, [query, refresh, close]);
 
   useEffect(() => {
     const el = listRef.current?.children[selected] as HTMLElement | undefined;
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected, items]);
 
-  const paste = (item: Item | undefined) => item && invoke("paste_item", { id: item.id });
-  const copy = (item: Item | undefined) => item && invoke("copy_item", { id: item.id });
+  const paste = (item: Item | undefined) =>
+    item && close(() => invoke("paste_item", { id: item.id }));
+  const copy = (item: Item | undefined) =>
+    item && close(() => invoke("copy_item", { id: item.id }));
   const remove = async (item: Item | undefined) => {
     if (!item) return;
     await invoke("delete_item", { id: item.id });
@@ -81,7 +103,7 @@ export default function App() {
     switch (e.key) {
       case "Escape":
         e.preventDefault();
-        invoke("hide_panel");
+        close();
         break;
       case "ArrowRight":
         e.preventDefault();
@@ -106,7 +128,7 @@ export default function App() {
   };
 
   return (
-    <div className="panel" onKeyDown={onKeyDown}>
+    <div className={`panel ${open ? "open" : ""}`} onKeyDown={onKeyDown}>
       <div className="toolbar">
         <input
           ref={inputRef}
