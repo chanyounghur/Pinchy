@@ -94,9 +94,19 @@ export default function App() {
     };
   }, [query, refresh]);
 
+  // Keep the selected card in view, scrolling smoothly (scrollIntoView stutters
+  // under rapid key repeats, so compute the target ourselves).
   useEffect(() => {
-    const el = listRef.current?.children[selected] as HTMLElement | undefined;
-    el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const list = listRef.current;
+    const el = list?.children[selected] as HTMLElement | undefined;
+    if (!list || !el) return;
+    const margin = 24;
+    const left = el.offsetLeft - margin;
+    const right = el.offsetLeft + el.offsetWidth + margin;
+    let target = list.scrollLeft;
+    if (left < list.scrollLeft) target = left;
+    else if (right > list.scrollLeft + list.clientWidth) target = right - list.clientWidth;
+    if (target !== list.scrollLeft) list.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
   }, [selected, items]);
 
   const close = () => invoke("hide_panel");
