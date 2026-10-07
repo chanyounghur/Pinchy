@@ -137,7 +137,8 @@ body,
   flex: 1;
   display: flex;
   gap: 16px;
-  padding: 2px 24px 20px;
+  /* Reserve room for the 3px outer selection ring on every side. */
+  padding: 6px 24px 20px;
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
@@ -163,14 +164,8 @@ body,
   cursor: default;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
-.card.selected::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border: 3px solid var(--accent);
-  border-radius: inherit;
-  z-index: 1;
-  pointer-events: none;
+.card.selected {
+  box-shadow: 0 0 0 3px var(--accent), 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .card-head {
