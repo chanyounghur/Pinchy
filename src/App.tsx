@@ -64,6 +64,7 @@ export default function App() {
   const [selected, setSelected] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const pointerRef = useRef<{ x: number; y: number } | null>(null);
 
   const refresh = useCallback(async (q: string) => {
     const result = await invoke<Item[]>("list_items", { query: q, limit: 200 });
@@ -94,19 +95,37 @@ export default function App() {
     };
   }, [query, refresh]);
 
-  // Keep the selected card in view, scrolling smoothly (scrollIntoView stutters
-  // under rapid key repeats, so compute the target ourselves).
+  // Scroll only the horizontal list; cancel an old destination when selection changes.
   useEffect(() => {
     const list = listRef.current;
-    const el = list?.children[selected] as HTMLElement | undefined;
+    const el = list?.querySelector<HTMLElement>(".card.selected");
     if (!list || !el) return;
-    const margin = 24;
-    const left = el.offsetLeft - margin;
-    const right = el.offsetLeft + el.offsetWidth + margin;
-    let target = list.scrollLeft;
-    if (left < list.scrollLeft) target = left;
-    else if (right > list.scrollLeft + list.clientWidth) target = right - list.clientWidth;
-    if (target !== list.scrollLeft) list.scrollTo({ left: Math.max(0, target), behavior: "smooth" });
+    const reveal = () => {
+      const viewport = list.getBoundingClientRect();
+      const card = el.getBoundingClientRect();
+      const margin = Math.min(24, Math.max(0, (list.clientWidth - card.width) / 2));
+      let target = list.scrollLeft;
+      if (card.left < viewport.left + margin) target += card.left - viewport.left - margin;
+      else if (card.right > viewport.right - margin) target += card.right - viewport.right + margin;
+      target = Math.max(0, Math.min(target, list.scrollWidth - list.clientWidth));
+      list.scrollTo({
+        left: target,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
+      });
+    };
+    let frame = 0;
+    const scheduleReveal = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(reveal);
+    };
+    scheduleReveal();
+    const observer = new ResizeObserver(scheduleReveal);
+    observer.observe(list);
+    return () => {
+      observer.disconnect();
+      cancelAnimationFrame(frame);
+      list.scrollTo({ left: list.scrollLeft, behavior: "instant" });
+    };
   }, [selected, items]);
 
   const close = () => invoke("hide_panel");
@@ -128,7 +147,7 @@ export default function App() {
         break;
       case "ArrowRight":
         e.preventDefault();
-        setSelected((s) => Math.min(s + 1, items.length - 1));
+        setSelected((s) => Math.min(s + 1, Math.max(0, items.length - 1)));
         break;
       case "ArrowLeft":
         e.preventDefault();
@@ -183,7 +202,12 @@ export default function App() {
           <div
             key={item.id}
             className={`card kind-${item.kind} ${i === selected ? "selected" : ""}`}
-            onMouseEnter={() => setSelected(i)}
+            onPointerMove={(e) => {
+              const previous = pointerRef.current;
+              pointerRef.current = { x: e.clientX, y: e.clientY };
+              // A card moving under a stationary pointer must not steal selection.
+              if (!previous || previous.x !== e.clientX || previous.y !== e.clientY) setSelected(i);
+            }}
             onClick={() => paste(item)}
             title={item.source_app ?? undefined}
           >
