@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{sync::Mutex, time::Duration};
-use tauri::{menu::MenuItem, AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Clone, Serialize)]
@@ -17,7 +17,6 @@ struct Inner {
 }
 
 pub struct UpdateState(Mutex<Inner>);
-pub struct UpdateMenu(pub MenuItem<tauri::Wry>);
 
 impl Default for UpdateState {
     fn default() -> Self {
@@ -35,15 +34,6 @@ impl Default for UpdateState {
 
 fn publish(app: &AppHandle) {
     let status = app.state::<UpdateState>().0.lock().unwrap().status.clone();
-    let title = match status.phase {
-        "ready" => "업데이트 준비됨 · 설정 열기…",
-        "checking" => "업데이트 확인 중…",
-        "downloading" => "업데이트 다운로드 중…",
-        _ => "업데이트…",
-    };
-    if let Some(menu) = app.try_state::<UpdateMenu>() {
-        let _ = menu.0.set_text(title);
-    }
     let _ = app.emit("update-status", status);
 }
 

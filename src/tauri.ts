@@ -7,6 +7,7 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 
 type Handler = (e: { payload: unknown }) => void;
 const handlers = new Map<string, Set<Handler>>();
+let mockAutostart = false;
 
 const MOCK_ITEMS = [
   { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "Claude", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000 },
@@ -21,7 +22,9 @@ export const invoke: typeof core.invoke = isTauri
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
       if (cmd === "get_settings") return { shortcut: "Shift+Super+V" };
-      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.0", version: null, error: null };
+      if (cmd === "get_autostart") return mockAutostart;
+      if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.1", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
         return MOCK_ITEMS.filter((i) => i.preview.toLowerCase().includes(q));

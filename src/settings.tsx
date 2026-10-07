@@ -1,9 +1,59 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke, listen } from "./tauri";
 import "./settings.css";
 
 const IS_MAC = navigator.platform.startsWith("Mac");
+
+function Autostart() {
+  const [enabled, setEnabled] = useState<boolean | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const pending = useRef(false);
+  useEffect(() => {
+    let disposed = false;
+    let refreshing = false;
+    const refresh = async () => {
+      if (pending.current || refreshing) return;
+      refreshing = true;
+      setBusy(true);
+      try {
+        const value = await invoke<boolean>("get_autostart");
+        if (!disposed) { setEnabled(value); setError(null); }
+      } catch (e) {
+        if (!disposed) { setEnabled(null); setError(String(e)); }
+      } finally {
+        refreshing = false;
+        if (!disposed) setBusy(false);
+      }
+    };
+    void refresh();
+    window.addEventListener("focus", refresh);
+    return () => { disposed = true; window.removeEventListener("focus", refresh); };
+  }, []);
+  const toggle = async () => {
+    if (pending.current || enabled === null) return;
+    pending.current = true;
+    setBusy(true);
+    setError(null);
+    try { setEnabled(await invoke<boolean>("set_autostart", { enabled: !enabled })); }
+    catch (e) { setError(String(e)); }
+    finally { pending.current = false; setBusy(false); }
+  };
+  return <section className="startup">
+    <div className="startup-row">
+      <label htmlFor="autostart">{IS_MAC ? "로그인 시 자동 실행" : "Windows 시작 시 자동 실행"}</label>
+      <div className="startup-control">
+        <span className="hint" aria-live="polite">{busy ? "확인 중…" : enabled === null ? "확인 실패" : enabled ? "ON" : "OFF"}</span>
+        <input id="autostart" className="switch" type="checkbox" role="switch"
+          checked={enabled ?? false} disabled={busy || enabled === null}
+          onChange={() => void toggle()} aria-describedby="autostart-note" />
+      </div>
+    </div>
+    <p className="note" id="autostart-note">로그인하면 창을 띄우지 않고 {IS_MAC ? "메뉴 막대" : "트레이"}에서 실행합니다.</p>
+    {error && <p className="update-error" role="alert">자동 실행 설정을 확인하거나 변경하지 못했어요. 설정 창을 다시 열어 주세요.<br />{error}</p>}
+  </section>;
+}
 
 type UpdateStatus = {
   phase: "idle" | "checking" | "downloading" | "ready" | "installing" | "latest" | "error";
@@ -150,6 +200,7 @@ function SettingsPage() {
         <span className={`msg ${message?.kind ?? ""}`}>{message?.text}</span>
       </div>
       <p className="note">{IS_MAC ? "수정자 키(⌘ ⌃ ⌥ ⇧)" : "Ctrl, Alt, Shift, Win 중"} 하나 이상과 일반 키 하나를 조합하세요.</p>
+      <Autostart />
       <Updates />
     </div>
   );

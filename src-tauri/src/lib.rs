@@ -13,8 +13,25 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
+use tauri_plugin_autostart::ManagerExt as AutostartExt;
 
 const SETTINGS_WINDOW: &str = "settings";
+
+#[tauri::command]
+fn get_autostart(app: AppHandle) -> Result<bool, String> {
+    app.autolaunch().is_enabled().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn set_autostart(app: AppHandle, enabled: bool) -> Result<bool, String> {
+    let autostart = app.autolaunch();
+    if enabled {
+        autostart.enable()
+    } else {
+        autostart.disable()
+    }.map_err(|e| e.to_string())?;
+    autostart.is_enabled().map_err(|e| e.to_string())
+}
 
 /// Registers `shortcut` as the only global shortcut. On failure the previous
 /// one is restored and the error returned.
@@ -121,6 +138,10 @@ fn remove_image_file(item: &Item) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updater::UpdateState::default())
         .plugin(tauri_plugin_opener::init())
@@ -157,15 +178,12 @@ pub fn run() {
             panel::init(app.handle());
 
             let open = MenuItemBuilder::with_id("open", "열기").build(app)?;
-            let shortcut_item = MenuItemBuilder::with_id("settings", "단축키 설정…").build(app)?;
+            let settings_item = MenuItemBuilder::with_id("settings", "설정 패널 열기").build(app)?;
             let clear = MenuItemBuilder::with_id("clear", "히스토리 비우기").build(app)?;
-            let update = MenuItemBuilder::with_id("update", "업데이트…").build(app)?;
-            app.manage(updater::UpdateMenu(update.clone()));
             let quit = MenuItemBuilder::with_id("quit", "종료").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open)
-                .item(&shortcut_item)
-                .item(&update)
+                .item(&settings_item)
                 .separator()
                 .item(&clear)
                 .separator()
@@ -173,7 +191,18 @@ pub fn run() {
                 .build()?;
             #[cfg(target_os = "macos")]
             let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/32x32.png"))?;
-            #[cfg(not(target_os = "macos"))]
+            #[cfg(target_os = "windows")]
+            let tray_icon = {
+                // The 512px app icon has ~32px of transparent padding per side.
+                // Trim only that padding before shrinking for the tray, keeping
+                // the cream tile and artwork intact. Leave other app icons alone.
+                let icon = image::load_from_memory(include_bytes!("../icons/icon.png"))?
+                    .crop_imm(32, 32, 448, 448)
+                    .resize_exact(32, 32, image::imageops::FilterType::Lanczos3)
+                    .into_rgba8();
+                tauri::image::Image::new_owned(icon.into_raw(), 32, 32)
+            };
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
             let tray_icon = app.default_window_icon().cloned().expect("default icon");
             TrayIconBuilder::new()
                 .icon(tray_icon)
@@ -184,7 +213,6 @@ pub fn run() {
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => panel::show(app),
                     "settings" => open_settings_window(app),
-                    "update" => open_settings_window(app),
                     "clear" => {
                         let db = app.state::<Db>();
                         if let Ok(items) = db.clear() {
@@ -225,6 +253,8 @@ pub fn run() {
             get_settings,
             set_shortcut,
             set_shortcut_capturing,
+            get_autostart,
+            set_autostart,
             updater::update_status,
             updater::check_update,
             updater::install_update

@@ -94,6 +94,16 @@ button:disabled {
   color: #d64545;
 }
 .updates { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.startup { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.startup-row, .startup-control { display: flex; align-items: center; gap: 10px; }
+.startup-row { justify-content: space-between; }
+.startup-row label { font-weight: 600; }
+.switch { appearance: none; width: 38px; height: 22px; flex-shrink: 0; margin: 0; border-radius: 12px; background: #777; position: relative; cursor: pointer; }
+.switch::after { content: ""; position: absolute; width: 18px; height: 18px; top: 2px; left: 2px; border-radius: 50%; background: #fff; }
+.switch:checked { background: #c64735; }
+.switch:checked::after { left: 18px; }
+.switch:disabled { opacity: 0.45; cursor: default; }
+.switch:focus-visible { outline: 2px solid #c64735; outline-offset: 3px; }
 .updates h1 small { font-weight: 400; opacity: 0.6; margin-left: 8px; }
 .updates p { line-height: 1.5; }
 .update-error { margin-top: 10px; font-size: 11px; overflow-wrap: anywhere; color: #d64545; user-select: text; }
