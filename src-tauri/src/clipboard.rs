@@ -36,7 +36,7 @@ impl ClipboardHandler for Handler {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
                 }
-                Err(e) => eprintln!("[pastel] db upsert failed: {e}"),
+                Err(e) => eprintln!("[pinchy] db upsert failed: {e}"),
             }
         }
     }
@@ -186,14 +186,14 @@ pub fn start(app: AppHandle, images_dir: PathBuf, icons_dir: PathBuf) {
             let ctx = match ClipboardContext::new() {
                 Ok(c) => c,
                 Err(e) => {
-                    eprintln!("[pastel] clipboard context failed: {e}");
+                    eprintln!("[pinchy] clipboard context failed: {e}");
                     return;
                 }
             };
             let mut watcher = match ClipboardWatcherContext::new_with_interval(Duration::from_millis(250)) {
                 Ok(w) => w,
                 Err(e) => {
-                    eprintln!("[pastel] clipboard watcher failed: {e}");
+                    eprintln!("[pinchy] clipboard watcher failed: {e}");
                     return;
                 }
             };

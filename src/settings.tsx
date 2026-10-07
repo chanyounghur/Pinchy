@@ -70,6 +70,10 @@ function SettingsPage() {
   const shown = draft ?? saved;
   return (
     <div className="page">
+      <div className="settings-brand">
+        <img src="/brand/pinchy-icon.png" alt="" draggable={false} />
+        <span>Pinchy <small>설정</small></span>
+      </div>
       <h1>패널 열기 단축키</h1>
       <div
         className={`capture ${capturing ? "capturing" : ""}`}
@@ -90,7 +94,7 @@ function SettingsPage() {
         </button>
         <span className={`msg ${message?.kind ?? ""}`}>{message?.text}</span>
       </div>
-      <p className="note">수정자 키(⌘ ⌃ ⌥ ⇧) 하나 이상과 일반 키 하나를 조합하세요.</p>
+      <p className="note">{IS_MAC ? "수정자 키(⌘ ⌃ ⌥ ⇧)" : "Ctrl, Alt, Shift, Win 중"} 하나 이상과 일반 키 하나를 조합하세요.</p>
     </div>
   );
 }

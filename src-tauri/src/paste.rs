@@ -38,7 +38,7 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
         }
         std::thread::sleep(Duration::from_millis(150));
         if let Err(e) = send_paste_shortcut() {
-            eprintln!("[pastel] paste shortcut failed: {e}");
+            eprintln!("[pinchy] paste shortcut failed: {e}");
         }
     });
     Ok(())

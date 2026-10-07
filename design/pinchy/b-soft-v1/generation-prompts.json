@@ -1,0 +1,22 @@
+{
+  "tool": "built-in image_gen",
+  "reference": "exec-b4a75014-2284-472e-b5a5-12a277422184.png, center B / SOFT",
+  "status": "Raster brand explorations; app integration and vector production not yet performed.",
+  "outputs": [
+    {
+      "key": "app-icon",
+      "prompt": "Use case: logo-brand. Reference image role: approved brand identity. Use ONLY CENTER concept B / SOFT. Preserve its exact identity: chunky charcoal rounded-square front clipboard slightly tilted counterclockwise, warm ivory opaque card interior, two charcoal capsule-ended horizontal content strokes, pale apricot rear card tilted clockwise and offset down-right, bright coral rounded clip at top with a distinctive small semicircular notch cut into its bottom center. Friendly soft geometric silhouette. No crab, hands or P monogram. Flat solid clean vector-like artwork, smooth precise edges, no grain, no gradients, no 3D. Deliver ONE standalone square app icon, not a sheet. Large centered approved B symbol on a warm ivory rounded-square app tile with generously rounded corners, symbol occupying about 72% of tile. True transparent background OUTSIDE the tile, tile itself opaque ivory. Optical balance and generous internal padding. No text, labels, shadows or surrounding mockups.",
+      "transparent_background": true
+    },
+    {
+      "key": "wordmark",
+      "prompt": "Use case: logo-brand. Reference image role: approved brand identity. Use ONLY CENTER concept B / SOFT. Preserve its exact identity: chunky charcoal rounded-square front clipboard slightly tilted counterclockwise, warm ivory opaque card interior, two charcoal capsule-ended horizontal content strokes, pale apricot rear card tilted clockwise and offset down-right, bright coral rounded clip at top with a distinctive small semicircular notch cut into its bottom center. Friendly soft geometric silhouette. No crab, hands or P monogram. Flat solid clean vector-like artwork, smooth precise edges, no grain, no gradients, no 3D. Deliver ONE horizontal logo lockup with large approved B symbol at left and exact text 'Pinchy' at right, set in thick, friendly rounded charcoal sans-serif lettering matching the reference wordmark. Perfect spacing and optical baseline alignment, generous clear space around lockup. True transparent background around logo; keep front card interior opaque ivory. No headings, labels, tagline, tile, alternative versions or mockups.",
+      "transparent_background": true
+    },
+    {
+      "key": "brand-sheet",
+      "prompt": "Use case: logo-brand. Reference image role: approved brand identity. Use ONLY CENTER concept B / SOFT. Preserve its exact identity: chunky charcoal rounded-square front clipboard slightly tilted counterclockwise, warm ivory opaque card interior, two charcoal capsule-ended horizontal content strokes, pale apricot rear card tilted clockwise and offset down-right, bright coral rounded clip at top with a distinctive small semicircular notch cut into its bottom center. Friendly soft geometric silhouette. No crab, hands or P monogram. Flat solid clean vector-like artwork, smooth precise edges, no grain, no gradients, no 3D. Deliver ONE polished landscape brand applications sheet with six generous well-aligned cells in a 3 by 2 layout, all applying the SAME approved B identity, not different logo concepts. Top row: 01 LIGHT full color symbol and Pinchy wordmark on warm ivory; 02 DARK symbol and ivory Pinchy wordmark on charcoal, outline adapted to ivory so it reads clearly while preserving coral clip; 03 CORAL ivory single-color symbol and Pinchy wordmark on flat coral background. Bottom row: 04 APP ICON warm ivory rounded-square icon tile on light neutral background; 05 TRAY simplified monochrome dark and white symbols side by side on light and dark halves, omit content strokes for tiny icons but preserve notched clip and overlapping cards; 06 STICKER oversized full-color B symbol with clean thick white contour on pale apricot backdrop. Small tasteful number and uppercase label in each cell, unobtrusive thin separators. No extra slogan or text, no devices, no 3D. A cohesive usable designer presentation with substantial whitespace and consistent silhouettes.",
+      "transparent_background": false
+    }
+  ]
+}

@@ -26,7 +26,7 @@ impl AppIconCache {
             return l.clone();
         }
         let look = self.build(bundle_id, bundle_path).unwrap_or_else(|| {
-            eprintln!("[pastel] no icon for {bundle_id} ({bundle_path})");
+            eprintln!("[pinchy] no icon for {bundle_id} ({bundle_path})");
             AppLook { icon: None, color: None }
         });
         self.looks.insert(bundle_id.to_string(), look.clone());
@@ -49,7 +49,7 @@ impl AppIconCache {
         } else {
             let bytes = platform::app_icon_bytes(bundle_path)?;
             let img = image::load_from_memory(&bytes)
-                .map_err(|e| eprintln!("[pastel] icon decode failed for {bundle_id}: {e}"))
+                .map_err(|e| eprintln!("[pinchy] icon decode failed for {bundle_id}: {e}"))
                 .ok()?;
             let img = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3);
             img.save(&png_path).ok()?;

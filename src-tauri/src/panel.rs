@@ -5,6 +5,7 @@
 //! `PANEL_HEIGHT`. The web content has a fixed height, so a shorter window
 //! simply clips it — the panel appears to rise from the screen edge and never
 //! strays onto a monitor placed below. Once closed, the window is ordered out.
+//! Windows uses immediate show/hide at full height to keep its client area valid.
 
 use crate::platform::{self, Rect};
 use std::sync::Mutex;
@@ -76,14 +77,21 @@ pub fn hide(app: &AppHandle) {
         if !was_open {
             return;
         }
+        let restore_focus = platform::is_self_active();
         if let Some(h) = window(&app).and_then(|w| platform::handle(&w)) {
             if let Some(current) = platform::window_frame(h) {
                 platform::animate_window_frame(h, platform::collapse_frame(current), SLIDE_SECONDS);
             }
         }
+        // Keep Tao's cached visibility in sync with the native window. Calling
+        // ShowWindow(SW_HIDE) directly leaves show() thinking it is already visible.
+        #[cfg(windows)]
+        if let Some(win) = window(&app) {
+            let _ = win.hide();
+        }
         // Only give focus back if we still have it (not when the user clicked elsewhere).
         let target = *state.target.lock().unwrap();
-        if let (Some(app_ref), true) = (target, platform::is_self_active()) {
+        if let (Some(app_ref), true) = (target, restore_focus) {
             platform::activate_app(app_ref);
         }
         // Order the window out once the animation has finished (unless reopened).
@@ -93,8 +101,13 @@ pub fn hide(app: &AppHandle) {
             let _ = app2.clone().run_on_main_thread(move || {
                 let still_closed = !*app2.state::<PanelState>().open.lock().unwrap();
                 if still_closed {
-                    if let Some(h) = window(&app2).and_then(|w| platform::handle(&w)) {
-                        platform::order_out(h);
+                    if let Some(win) = window(&app2) {
+                        #[cfg(windows)]
+                        let _ = win.hide();
+                        #[cfg(not(windows))]
+                        if let Some(h) = platform::handle(&win) {
+                            platform::order_out(h);
+                        }
                     }
                 }
             });

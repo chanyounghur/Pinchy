@@ -2658,28 +2658,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pastel"
-version = "0.1.0"
-dependencies = [
- "clipboard-rs",
- "enigo",
- "image",
- "objc2",
- "objc2-app-kit",
- "objc2-foundation",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tauri-plugin-global-shortcut",
- "tauri-plugin-opener",
- "window-vibrancy",
- "windows 0.61.3",
-]
-
-[[package]]
 name = "percent-encoding"
 version = "2.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2743,6 +2721,28 @@ name = "pin-project-lite"
 version = "0.2.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a89322df9ebe1c1578d689c92318e070967d1042b512afbe49518723f4e6d5cd"
+
+[[package]]
+name = "pinchy"
+version = "0.1.0"
+dependencies = [
+ "clipboard-rs",
+ "enigo",
+ "image",
+ "objc2",
+ "objc2-app-kit",
+ "objc2-foundation",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-global-shortcut",
+ "tauri-plugin-opener",
+ "window-vibrancy",
+ "windows 0.61.3",
+]
 
 [[package]]
 name = "piper"

@@ -6,7 +6,7 @@
   --card: #ffffff;
   --card-fg: #1c1c1e;
   --card-muted: #8e8e93;
-  --accent: #1a7cff;
+  --accent: #ff6652;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Segoe UI", sans-serif;
   font-size: 14px;
   color: var(--fg);
@@ -64,6 +64,23 @@ body,
   border-radius: 10px;
   color: var(--fg);
   transition: background 120ms, width 120ms;
+}
+
+.brand {
+  position: absolute;
+  left: 24px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+  font-weight: 750;
+  letter-spacing: -0.5px;
+}
+.brand img { width: 32px; height: 32px; object-fit: contain; }
+@media (max-width: 680px) {
+  .brand span { display: none; }
+  .toolbar { padding-left: 72px; padding-right: 48px; }
+  .search:focus-within input, .search.active input { width: 120px; }
 }
 .search:focus-within,
 .search.active {

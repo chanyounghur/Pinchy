@@ -18,6 +18,17 @@ body {
 .page {
   padding: 20px 24px;
 }
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 16px;
+  font-size: 22px;
+  font-weight: 750;
+  letter-spacing: -0.5px;
+}
+.settings-brand img { width: 36px; height: 36px; }
+.settings-brand small { font-size: 12px; font-weight: 400; opacity: 0.6; margin-left: 6px; }
 h1 {
   margin: 0 0 12px;
   font-size: 14px;
@@ -37,8 +48,8 @@ h1 {
   cursor: text;
 }
 .capture.capturing {
-  border-color: #1a7cff;
-  box-shadow: 0 0 0 3px rgba(26, 124, 255, 0.25);
+  border-color: #c64735;
+  box-shadow: 0 0 0 3px rgba(255, 102, 82, 0.25);
 }
 .combo {
   font-size: 20px;
@@ -65,8 +76,8 @@ button {
   font: inherit;
 }
 button.primary {
-  background: #1a7cff;
-  border-color: #1a7cff;
+  background: #c64735;
+  border-color: #c64735;
   color: #fff;
 }
 button:disabled {

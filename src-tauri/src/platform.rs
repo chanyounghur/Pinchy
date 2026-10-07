@@ -25,7 +25,8 @@ pub struct Rect {
 }
 
 /// Open/closed frames of a panel of `height` docked to the bottom of `screen`,
-/// inset horizontally. "Closed" keeps the bottom edge in place with height 1.
+/// inset horizontally. Windows keeps a full-sized hidden window because a
+/// one-pixel outer height can produce a negative client height in Tauri.
 pub fn panel_frames(screen: Rect, height: f64, inset: f64) -> (Rect, Rect) {
     let open = Rect {
         x: screen.x + inset,
@@ -36,12 +37,12 @@ pub fn panel_frames(screen: Rect, height: f64, inset: f64) -> (Rect, Rect) {
     (open, collapse_frame(open))
 }
 
-/// Same frame with its height collapsed to 1, bottom edge unchanged.
+/// Collapse on macOS; preserve a valid client area on Windows.
 pub fn collapse_frame(r: Rect) -> Rect {
     if cfg!(target_os = "macos") {
         Rect { h: 1.0, ..r }
     } else {
-        Rect { y: r.y + r.h - 1.0, h: 1.0, ..r }
+        r
     }
 }
 
@@ -205,8 +206,6 @@ pub use mac::*;
 #[cfg(windows)]
 mod win {
     use super::{AppInfo, Handle, Rect};
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::{Duration, Instant};
     use tauri::WebviewWindow;
     use windows::core::PWSTR;
     use windows::Win32::Foundation::{CloseHandle, HWND, POINT, RECT};
@@ -225,8 +224,8 @@ mod win {
     use windows::Win32::UI::WindowsAndMessaging::{
         DestroyIcon, GetCursorPos, GetForegroundWindow, GetIconInfo, GetWindowLongPtrW,
         GetWindowRect, GetWindowThreadProcessId, SetForegroundWindow, SetWindowLongPtrW,
-        SetWindowPos, ShowWindow, GWL_EXSTYLE, HICON, ICONINFO, SWP_NOACTIVATE, SWP_NOZORDER,
-        SW_HIDE, WS_EX_TOOLWINDOW,
+        SetWindowPos, GWL_EXSTYLE, HICON, ICONINFO, SWP_NOACTIVATE, SWP_NOZORDER,
+        WS_EX_TOOLWINDOW,
     };
 
     fn hwnd(h: Handle) -> HWND {
@@ -341,38 +340,9 @@ mod win {
         }
     }
 
-    static ANIMATION: AtomicU64 = AtomicU64::new(0);
-
-    /// Win32 has no window animator; interpolate on a thread (ease-out cubic).
-    /// Starting a new animation cancels the previous one.
-    pub fn animate_window_frame(h: Handle, to: Rect, seconds: f64) {
-        let Some(from) = window_frame(h) else { return };
-        let generation = ANIMATION.fetch_add(1, Ordering::SeqCst) + 1;
-        std::thread::spawn(move || {
-            let start = Instant::now();
-            loop {
-                if ANIMATION.load(Ordering::SeqCst) != generation {
-                    return;
-                }
-                let t = (start.elapsed().as_secs_f64() / seconds).min(1.0);
-                let e = 1.0 - (1.0 - t).powi(3);
-                let lerp = |a: f64, b: f64| a + (b - a) * e;
-                set_window_frame(
-                    h,
-                    Rect { x: lerp(from.x, to.x), y: lerp(from.y, to.y), w: lerp(from.w, to.w), h: lerp(from.h, to.h) },
-                );
-                if t >= 1.0 {
-                    return;
-                }
-                std::thread::sleep(Duration::from_millis(8));
-            }
-        });
-    }
-
-    pub fn order_out(h: Handle) {
-        unsafe {
-            let _ = ShowWindow(hwnd(h), SW_HIDE);
-        }
+    /// Keep resizing on the caller's UI thread, without collapsing the client area.
+    pub fn animate_window_frame(h: Handle, to: Rect, _seconds: f64) {
+        set_window_frame(h, to);
     }
 
     /// Acrylic backdrop, rounded corners, and no Alt-Tab entry.

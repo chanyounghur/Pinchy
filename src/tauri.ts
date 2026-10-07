@@ -39,7 +39,7 @@ export const listen: typeof tauriEvent.listen = isTauri
 export const convertFileSrc = isTauri ? core.convertFileSrc : (p: string) => p;
 
 if (!isTauri) {
-  (window as unknown as { __pastelMock: unknown }).__pastelMock = {
+  (window as unknown as { __pinchyMock: unknown }).__pinchyMock = {
     emit: (name: string) => handlers.get(name)?.forEach((h) => h({ payload: null })),
   };
 }

@@ -1,12 +1,12 @@
 [package]
-name = "pastel"
+name = "pinchy"
 version = "0.1.0"
 description = "Clipboard history manager"
-authors = ["chanyounghur"]
+authors = ["Chanyoung Hur <ruben@kakao.com>"]
 edition = "2021"
 
 [lib]
-name = "pastel_lib"
+name = "pinchy_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

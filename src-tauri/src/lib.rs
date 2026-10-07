@@ -146,7 +146,7 @@ pub fn run() {
             let shortcut = store.get().shortcut;
             app.manage(store);
             if let Err(e) = apply_shortcut(app.handle(), &shortcut, None) {
-                eprintln!("[pastel] {e}; falling back to {}", settings::DEFAULT_SHORTCUT);
+                eprintln!("[pinchy] {e}; falling back to {}", settings::DEFAULT_SHORTCUT);
                 let _ = apply_shortcut(app.handle(), settings::DEFAULT_SHORTCUT, None);
             }
 
@@ -165,10 +165,14 @@ pub fn run() {
                 .separator()
                 .item(&quit)
                 .build()?;
+            #[cfg(target_os = "macos")]
+            let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/32x32.png"))?;
+            #[cfg(not(target_os = "macos"))]
+            let tray_icon = app.default_window_icon().cloned().expect("default icon");
             TrayIconBuilder::new()
-                .icon(app.default_window_icon().cloned().expect("default icon"))
-                .icon_as_template(true)
-                .tooltip("Pastel")
+                .icon(tray_icon)
+                .icon_as_template(cfg!(target_os = "macos"))
+                .tooltip("Pinchy")
                 .menu(&menu)
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, e| match e.id().as_ref() {

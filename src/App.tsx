@@ -151,6 +151,10 @@ export default function App() {
   return (
     <div className="panel" onKeyDown={onKeyDown}>
       <div className="toolbar">
+        <div className="brand" aria-label="Pinchy">
+          <img src="/brand/pinchy-icon.png" alt="" draggable={false} />
+          <span>Pinchy</span>
+        </div>
         <label className={`search ${query ? "active" : ""}`}>
           <SearchIcon />
           <input

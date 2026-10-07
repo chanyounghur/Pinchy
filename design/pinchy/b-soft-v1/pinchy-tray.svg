@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <defs><mask id="mark">
+  <g transform="rotate(12 40 38)">
+    <rect x="29" y="21" width="27" height="34" rx="7" fill="none" stroke="white" stroke-width="5"/>
+  </g>
+  <g transform="rotate(-8 27 31)">
+    <rect x="9" y="13" width="36" height="39" rx="8" fill="black" stroke="black" stroke-width="9"/>
+    <rect x="9" y="13" width="36" height="39" rx="8" fill="none" stroke="white" stroke-width="5"/>
+    <path d="M22 5H33Q37 5 37 9V18Q37 21 34 21H31V19A4 4 0 0 0 23 19V21H20Q17 21 17 18V10Q17 5 22 5Z" fill="white"/>
+  </g>
+  </mask></defs>
+  <rect width="64" height="64" fill="black" mask="url(#mark)"/>
+</svg>
