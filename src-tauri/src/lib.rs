@@ -74,7 +74,7 @@ pub fn run() {
                 })
                 .build(),
         )
-        .manage(panel::Target::default())
+        .manage(panel::PanelState::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -85,6 +85,7 @@ pub fn run() {
             app.manage(Db::open(&data_dir.join("pastel.db"))?);
 
             clipboard::start(app.handle().clone(), images_dir);
+            panel::init(app.handle());
 
             let open = MenuItemBuilder::with_id("open", "열기  ⇧⌘V").build(app)?;
             let clear = MenuItemBuilder::with_id("clear", "히스토리 비우기").build(app)?;
@@ -119,8 +120,10 @@ pub fn run() {
         })
         .on_window_event(|window, event| {
             if let WindowEvent::Focused(false) = event {
-                if window.label() == panel::WINDOW {
-                    panel::request_hide(window.app_handle());
+                let app = window.app_handle();
+                let open = *app.state::<panel::PanelState>().open.lock().unwrap();
+                if window.label() == panel::WINDOW && open {
+                    panel::request_hide(app);
                 }
             }
         })

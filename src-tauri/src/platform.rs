@@ -85,3 +85,24 @@ pub fn activate_self() {}
 pub fn cursor_screen_work_area() -> Option<WorkArea> {
     None
 }
+
+/// Keep the always-present overlay window out of Mission Control / window
+/// cycling and let it float over full-screen apps.
+#[cfg(target_os = "macos")]
+pub fn configure_overlay_window(ns_window: *mut std::ffi::c_void) {
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+    if ns_window.is_null() {
+        return;
+    }
+    let win: &NSWindow = unsafe { &*(ns_window as *const NSWindow) };
+    let behavior = win.collectionBehavior()
+        | NSWindowCollectionBehavior::CanJoinAllSpaces
+        | NSWindowCollectionBehavior::Transient
+        | NSWindowCollectionBehavior::Stationary
+        | NSWindowCollectionBehavior::IgnoresCycle
+        | NSWindowCollectionBehavior::FullScreenAuxiliary;
+    win.setCollectionBehavior(behavior);
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn configure_overlay_window(_ns_window: *mut std::ffi::c_void) {}

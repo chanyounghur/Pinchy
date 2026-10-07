@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { invoke, convertFileSrc, listen } from "./tauri";
 import "./App.css";
 
 type Item = {
@@ -40,6 +39,7 @@ export default function App() {
   const [selected, setSelected] = useState(0);
   const [open, setOpen] = useState(false);
   const openRef = useRef(false);
+  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -58,7 +58,15 @@ export default function App() {
     if (!openRef.current) return;
     openRef.current = false;
     setOpen(false);
-    window.setTimeout(after, SLIDE_MS);
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      panelRef.current?.removeEventListener("transitionend", finish);
+      after();
+    };
+    panelRef.current?.addEventListener("transitionend", finish);
+    window.setTimeout(finish, SLIDE_MS + 80); // fallback if transitionend never fires
   }, []);
 
   useEffect(() => {
@@ -128,7 +136,7 @@ export default function App() {
   };
 
   return (
-    <div className={`panel ${open ? "open" : ""}`} onKeyDown={onKeyDown}>
+    <div ref={panelRef} className={`panel ${open ? "open" : ""}`} onKeyDown={onKeyDown}>
       <div className="toolbar">
         <input
           ref={inputRef}

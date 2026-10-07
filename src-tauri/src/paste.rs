@@ -1,7 +1,7 @@
 //! Put an item back on the clipboard and paste it into the previously active app.
 
 use crate::db::Item;
-use crate::panel::{self, Target};
+use crate::panel::{self, PanelState};
 use crate::platform;
 use clipboard_rs::common::RustImage;
 use clipboard_rs::{Clipboard, ClipboardContext, RustImageData};
@@ -28,9 +28,9 @@ pub fn copy_to_clipboard(item: &Item) -> Result<(), String> {
 /// Hides the panel, re-activates the target app, and sends the paste shortcut.
 pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
     copy_to_clipboard(item)?;
+    let target = *app.state::<PanelState>().target.lock().unwrap();
     panel::hide(app);
 
-    let target = *app.state::<Target>().0.lock().unwrap();
     std::thread::spawn(move || {
         if let Some(pid) = target {
             platform::activate_app(pid);

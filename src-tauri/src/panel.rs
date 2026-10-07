@@ -1,4 +1,8 @@
-//! The bottom overlay panel: show/hide/toggle and remembering which app to paste into.
+//! The bottom overlay panel.
+//!
+//! The window is created once, kept visible and transparent, and never hidden:
+//! hiding a window suspends WebKit, which breaks the slide animation. "Closed"
+//! means the webview has slid the panel out and the window ignores clicks.
 
 use crate::platform::{self, WorkArea};
 use std::sync::Mutex;
@@ -10,12 +14,25 @@ pub const SHOWN_EVENT: &str = "panel-shown";
 /// Asks the webview to play its slide-out animation and then call `hide_panel`.
 pub const HIDE_EVENT: &str = "panel-hide";
 
-/// pid of the app that was in front right before the panel opened.
 #[derive(Default)]
-pub struct Target(pub Mutex<Option<i32>>);
+pub struct PanelState {
+    /// pid of the app that was in front right before the panel opened.
+    pub target: Mutex<Option<i32>>,
+    pub open: Mutex<bool>,
+}
 
 fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(WINDOW)
+}
+
+/// Called once at startup: show the (transparent, click-through) window.
+pub fn init(app: &AppHandle) {
+    let Some(win) = window(app) else { return };
+    if let Ok(ptr) = win.ns_window() {
+        platform::configure_overlay_window(ptr);
+    }
+    let _ = win.set_ignore_cursor_events(true);
+    let _ = win.show();
 }
 
 fn cursor_work_area(win: &WebviewWindow) -> Option<WorkArea> {
@@ -39,10 +56,12 @@ fn cursor_work_area(win: &WebviewWindow) -> Option<WorkArea> {
 
 pub fn show(app: &AppHandle) {
     let Some(win) = window(app) else { return };
+    let state = app.state::<PanelState>();
 
     if let Some((pid, _)) = platform::frontmost_app() {
-        *app.state::<Target>().0.lock().unwrap() = Some(pid);
+        *state.target.lock().unwrap() = Some(pid);
     }
+    *state.open.lock().unwrap() = true;
 
     // Dock the panel to the bottom of the screen the cursor is on.
     if let Some(a) = cursor_work_area(&win) {
@@ -50,29 +69,24 @@ pub fn show(app: &AppHandle) {
         let _ = win.set_position(LogicalPosition::new(a.x, a.y + a.h - PANEL_HEIGHT));
     }
 
-    #[cfg(target_os = "macos")]
-    {
-        // Undo a previous `AppHandle::hide` so the window can come back.
-        let _ = tauri::AppHandle::show(app);
-    }
+    let _ = win.set_ignore_cursor_events(false);
     let _ = win.show();
     let _ = win.set_focus();
     platform::activate_self();
     let _ = app.emit(SHOWN_EVENT, ());
 }
 
-/// Immediate hide; the webview calls this after its slide-out animation.
+/// Immediate "hide": make the window click-through and give focus back.
+/// The webview calls this after its slide-out animation.
 pub fn hide(app: &AppHandle) {
-    #[cfg(target_os = "macos")]
-    {
-        // Hiding the whole app hands focus back to the previous app.
-        let _ = tauri::AppHandle::hide(app);
+    let state = app.state::<PanelState>();
+    *state.open.lock().unwrap() = false;
+    if let Some(win) = window(app) {
+        let _ = win.set_ignore_cursor_events(true);
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        if let Some(win) = window(app) {
-            let _ = win.hide();
-        }
+    let target = *state.target.lock().unwrap();
+    if let Some(pid) = target {
+        platform::activate_app(pid);
     }
 }
 
@@ -82,10 +96,8 @@ pub fn request_hide(app: &AppHandle) {
 }
 
 pub fn toggle(app: &AppHandle) {
-    let visible = window(app)
-        .and_then(|w| w.is_visible().ok())
-        .unwrap_or(false);
-    if visible {
+    let open = *app.state::<PanelState>().open.lock().unwrap();
+    if open {
         request_hide(app);
     } else {
         show(app);
