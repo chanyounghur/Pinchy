@@ -65,6 +65,78 @@ export default function App() {
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
+  const revealSelectionRef = useRef(true);
+  const stopScrollingRef = useRef(() => {});
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    let frame = 0;
+    let velocity = 0;
+    let lastTime = 0;
+    let lastPointer: { x: number; y: number } | null = null;
+    const stop = () => {
+      cancelAnimationFrame(frame);
+      frame = 0;
+      velocity = 0;
+      list.scrollTo({ left: list.scrollLeft, behavior: "instant" });
+    };
+    stopScrollingRef.current = stop;
+    const tick = (time: number) => {
+      const before = list.scrollLeft;
+      list.scrollLeft += velocity * Math.min(time - lastTime, 32) / 1000;
+      lastTime = time;
+      frame = velocity && Math.abs(list.scrollLeft - before) > 0.01
+        ? requestAnimationFrame(tick) : 0;
+    };
+    const move = (e: PointerEvent) => {
+      if (e.pointerType !== "mouse") return;
+      if (lastPointer?.x === e.clientX && lastPointer.y === e.clientY) return;
+      lastPointer = { x: e.clientX, y: e.clientY };
+      const rect = list.getBoundingClientRect();
+      const edge = Math.min(64, rect.width / 4);
+      const x = e.clientX - rect.left;
+      const strength = x < edge ? -(1 - x / edge)
+        : x > rect.width - edge ? 1 - (rect.width - x) / edge : 0;
+      if (!strength) { stop(); return; }
+      revealSelectionRef.current = false;
+      velocity = Math.sign(strength) * (120 + 480 * Math.min(1, Math.abs(strength)));
+      if (!frame) {
+        list.scrollTo({ left: list.scrollLeft, behavior: "instant" });
+        lastTime = performance.now();
+        frame = requestAnimationFrame(tick);
+      }
+    };
+    const wheel = (e: WheelEvent) => {
+      if (e.ctrlKey || e.metaKey) return;
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (!delta || list.scrollWidth <= list.clientWidth) return;
+      e.preventDefault();
+      stop();
+      revealSelectionRef.current = false;
+      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
+        : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth : 1;
+      list.scrollLeft += delta * unit;
+    };
+    const leave = () => { lastPointer = null; stop(); };
+    list.addEventListener("pointermove", move);
+    list.addEventListener("pointerleave", leave);
+    list.addEventListener("pointercancel", leave);
+    // React's delegated wheel listener is passive, so use a cancellable native listener.
+    list.addEventListener("wheel", wheel, { passive: false });
+    window.addEventListener("blur", leave);
+    window.addEventListener("keydown", stop);
+    return () => {
+      stop();
+      list.removeEventListener("pointermove", move);
+      list.removeEventListener("pointerleave", leave);
+      list.removeEventListener("pointercancel", leave);
+      list.removeEventListener("wheel", wheel);
+      window.removeEventListener("blur", leave);
+      window.removeEventListener("keydown", stop);
+      stopScrollingRef.current = () => {};
+    };
+  }, []);
 
   const refresh = useCallback(async (q: string) => {
     const result = await invoke<Item[]>("list_items", { query: q, limit: 200 });
@@ -82,6 +154,8 @@ export default function App() {
     const unlisteners = [
       listen("clipboard-changed", () => refresh(query)),
       listen("panel-shown", () => {
+        stopScrollingRef.current();
+        revealSelectionRef.current = true;
         setQuery("");
         setSelected(0);
         refresh("");
@@ -101,6 +175,7 @@ export default function App() {
     const el = list?.querySelector<HTMLElement>(".card.selected");
     if (!list || !el) return;
     const reveal = () => {
+      if (!revealSelectionRef.current) return;
       const viewport = list.getBoundingClientRect();
       const card = el.getBoundingClientRect();
       const margin = Math.min(24, Math.max(0, (list.clientWidth - card.width) / 2));
@@ -134,6 +209,7 @@ export default function App() {
   const remove = (item: Item | undefined) => item && invoke("delete_item", { id: item.id });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    revealSelectionRef.current = true;
     const mod = e.metaKey || e.ctrlKey;
     if (mod && /^[1-9]$/.test(e.key)) {
       e.preventDefault();
@@ -182,6 +258,8 @@ export default function App() {
             placeholder="검색"
             value={query}
             onChange={(e) => {
+              stopScrollingRef.current();
+              revealSelectionRef.current = true;
               setQuery(e.target.value);
               setSelected(0);
             }}
@@ -206,7 +284,10 @@ export default function App() {
               const previous = pointerRef.current;
               pointerRef.current = { x: e.clientX, y: e.clientY };
               // A card moving under a stationary pointer must not steal selection.
-              if (!previous || previous.x !== e.clientX || previous.y !== e.clientY) setSelected(i);
+              if (!previous || previous.x !== e.clientX || previous.y !== e.clientY) {
+                revealSelectionRef.current = false;
+                setSelected(i);
+              }
             }}
             onClick={() => paste(item)}
             title={item.source_app ?? undefined}
