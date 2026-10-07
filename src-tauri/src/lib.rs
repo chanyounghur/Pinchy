@@ -1,3 +1,4 @@
+mod appicon;
 mod clipboard;
 mod db;
 mod panel;
@@ -81,10 +82,12 @@ pub fn run() {
 
             let data_dir = app.path().app_data_dir()?;
             let images_dir = data_dir.join("images");
+            let icons_dir = data_dir.join("icons");
             std::fs::create_dir_all(&images_dir)?;
+            appicon::ensure_dir(&icons_dir);
             app.manage(Db::open(&data_dir.join("pastel.db"))?);
 
-            clipboard::start(app.handle().clone(), images_dir);
+            clipboard::start(app.handle().clone(), images_dir, icons_dir);
             panel::init(app.handle());
 
             let open = MenuItemBuilder::with_id("open", "열기  ⇧⌘V").build(app)?;
@@ -123,7 +126,7 @@ pub fn run() {
                 let app = window.app_handle();
                 let open = *app.state::<panel::PanelState>().open.lock().unwrap();
                 if window.label() == panel::WINDOW && open {
-                    panel::request_hide(app);
+                    panel::hide(app);
                 }
             }
         })

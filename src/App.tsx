@@ -8,13 +8,13 @@ type Item = {
   content: string;
   preview: string;
   source_app: string | null;
+  app_icon: string | null;
+  app_color: string | null;
   width: number | null;
   height: number | null;
   size: number;
   created_at: number;
 };
-
-const SLIDE_MS = 180;
 
 const KIND_LABEL: Record<Item["kind"], string> = {
   text: "텍스트",
@@ -26,20 +26,42 @@ const KIND_LABEL: Record<Item["kind"], string> = {
 function timeAgo(ms: number) {
   const diff = Math.max(0, Date.now() - ms);
   const m = Math.floor(diff / 60000);
-  if (m < 1) return "방금";
+  if (m < 1) return "방금 전";
   if (m < 60) return `${m}분 전`;
   const h = Math.floor(m / 60);
   if (h < 24) return `${h}시간 전`;
   return `${Math.floor(h / 24)}일 전`;
 }
 
+function footerText(item: Item) {
+  if (item.kind === "image") return `${item.width} × ${item.height}`;
+  if (item.kind === "files") return `파일 ${item.size}개`;
+  return `${item.size.toLocaleString()}자`;
+}
+
+const SearchIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+    <circle cx="11" cy="11" r="7" />
+    <path d="M20 20l-3.5-3.5" />
+  </svg>
+);
+const HistoryIcon = () => (
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M3 12a9 9 0 1 0 3-6.7" />
+    <path d="M3 4v5h5" />
+    <path d="M12 7v5l3 2" />
+  </svg>
+);
+const LinesIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round">
+    <path d="M4 7h16M4 12h16M4 17h10" />
+  </svg>
+);
+
 export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
-  const [open, setOpen] = useState(false);
-  const openRef = useRef(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -53,22 +75,6 @@ export default function App() {
     refresh(query);
   }, [query, refresh]);
 
-  // Slide out, then run `after` (defaults to hiding the window).
-  const close = useCallback((after: () => void = () => invoke("hide_panel")) => {
-    if (!openRef.current) return;
-    openRef.current = false;
-    setOpen(false);
-    let done = false;
-    const finish = () => {
-      if (done) return;
-      done = true;
-      panelRef.current?.removeEventListener("transitionend", finish);
-      after();
-    };
-    panelRef.current?.addEventListener("transitionend", finish);
-    window.setTimeout(finish, SLIDE_MS + 80); // fallback if transitionend never fires
-  }, []);
-
   useEffect(() => {
     const focusInput = () => inputRef.current?.focus();
     window.addEventListener("focus", focusInput);
@@ -78,36 +84,33 @@ export default function App() {
         setQuery("");
         setSelected(0);
         refresh("");
-        requestAnimationFrame(() => {
-          openRef.current = true;
-          setOpen(true);
-          focusInput();
-        });
+        listRef.current?.scrollTo({ left: 0 });
+        focusInput();
       }),
-      listen("panel-hide", () => close()),
     ];
     return () => {
       window.removeEventListener("focus", focusInput);
       unlisteners.forEach((u) => u.then((f) => f()));
     };
-  }, [query, refresh, close]);
+  }, [query, refresh]);
 
   useEffect(() => {
     const el = listRef.current?.children[selected] as HTMLElement | undefined;
     el?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selected, items]);
 
-  const paste = (item: Item | undefined) =>
-    item && close(() => invoke("paste_item", { id: item.id }));
-  const copy = (item: Item | undefined) =>
-    item && close(() => invoke("copy_item", { id: item.id }));
-  const remove = async (item: Item | undefined) => {
-    if (!item) return;
-    await invoke("delete_item", { id: item.id });
-  };
+  const close = () => invoke("hide_panel");
+  const paste = (item: Item | undefined) => item && invoke("paste_item", { id: item.id });
+  const copy = (item: Item | undefined) => item && invoke("copy_item", { id: item.id });
+  const remove = (item: Item | undefined) => item && invoke("delete_item", { id: item.id });
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     const mod = e.metaKey || e.ctrlKey;
+    if (mod && /^[1-9]$/.test(e.key)) {
+      e.preventDefault();
+      paste(items[Number(e.key) - 1]);
+      return;
+    }
     switch (e.key) {
       case "Escape":
         e.preventDefault();
@@ -136,24 +139,30 @@ export default function App() {
   };
 
   return (
-    <div ref={panelRef} className={`panel ${open ? "open" : ""}`} onKeyDown={onKeyDown}>
+    <div className="panel" onKeyDown={onKeyDown}>
       <div className="toolbar">
-        <input
-          ref={inputRef}
-          autoFocus
-          className="search"
-          placeholder="검색…"
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setSelected(0);
-          }}
-        />
-        <span className="hint">
-          ↩ 붙여넣기 · ⌘↩ 복사만 · ⌘⌫ 삭제 · esc 닫기
-        </span>
-        <span className="count">{items.length}개</span>
+        <label className={`search ${query ? "active" : ""}`}>
+          <SearchIcon />
+          <input
+            ref={inputRef}
+            autoFocus
+            placeholder="검색"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setSelected(0);
+            }}
+          />
+        </label>
+        <div className="tab selected">
+          <HistoryIcon />
+          클립보드 히스토리
+        </div>
+        <div className="toolbar-right">
+          <span className="count">{items.length}</span>
+        </div>
       </div>
+
       <div className="list" ref={listRef}>
         {items.length === 0 && <div className="empty">아직 복사한 내용이 없어요</div>}
         {items.map((item, i) => (
@@ -162,12 +171,20 @@ export default function App() {
             className={`card kind-${item.kind} ${i === selected ? "selected" : ""}`}
             onMouseEnter={() => setSelected(i)}
             onClick={() => paste(item)}
+            title={item.source_app ?? undefined}
           >
-            <div className="card-head">
-              <span className="kind">{KIND_LABEL[item.kind]}</span>
-              <span className="meta">
-                {item.source_app ?? ""} · {timeAgo(item.created_at)}
-              </span>
+            <div className="card-head" style={{ background: item.app_color ?? "#8e8e93" }}>
+              <div className="card-title">
+                <span className="kind">{KIND_LABEL[item.kind]}</span>
+                <span className="time">{timeAgo(item.created_at)}</span>
+              </div>
+              <div className="app-icon">
+                {item.app_icon ? (
+                  <img src={convertFileSrc(item.app_icon)} alt="" draggable={false} />
+                ) : (
+                  <span>{(item.source_app ?? "?").slice(0, 1)}</span>
+                )}
+              </div>
             </div>
             <div className="card-body">
               {item.kind === "image" ? (
@@ -177,11 +194,13 @@ export default function App() {
               )}
             </div>
             <div className="card-foot">
-              {item.kind === "image"
-                ? `${item.width}×${item.height}`
-                : item.kind === "files"
-                  ? `${item.size}개 파일`
-                  : `${item.size.toLocaleString()}자`}
+              <span>{footerText(item)}</span>
+              {i < 9 && (
+                <span className="badge">
+                  <LinesIcon />
+                  {i + 1}
+                </span>
+              )}
             </div>
           </div>
         ))}

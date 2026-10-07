@@ -1,13 +1,26 @@
 :root {
-  --bg: rgba(28, 28, 32, 0.94);
-  --fg: #ececf0;
-  --muted: #9a9aa6;
-  --card: rgba(255, 255, 255, 0.07);
-  --card-hover: rgba(255, 255, 255, 0.12);
-  --accent: #5b8cff;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Pretendard", sans-serif;
-  font-size: 13px;
+  --fg: #1c1c1e;
+  --muted: rgba(60, 60, 67, 0.6);
+  --chip: rgba(0, 0, 0, 0.07);
+  --chip-strong: rgba(0, 0, 0, 0.12);
+  --card: #ffffff;
+  --card-fg: #1c1c1e;
+  --card-muted: #8e8e93;
+  --accent: #1a7cff;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Segoe UI", sans-serif;
+  font-size: 14px;
   color: var(--fg);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #f2f2f7;
+    --muted: rgba(235, 235, 245, 0.6);
+    --chip: rgba(255, 255, 255, 0.1);
+    --chip-strong: rgba(255, 255, 255, 0.16);
+    --card: #2c2c2e;
+    --card-fg: #f2f2f7;
+    --card-muted: #98989d;
+  }
 }
 
 * {
@@ -19,7 +32,6 @@ body,
 #root {
   margin: 0;
   height: 100%;
-  position: relative;
   background: transparent;
   overflow: hidden;
   user-select: none;
@@ -27,63 +39,93 @@ body,
 }
 
 .panel {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -100%;
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--bg);
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
-  box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.35);
-  transition: bottom 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
-}
-.panel.open {
-  bottom: 0;
 }
 
+/* ---- toolbar ---- */
 .toolbar {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 20px 8px;
+  justify-content: center;
+  gap: 10px;
+  height: 58px;
+  padding: 0 24px;
 }
 
 .search {
-  flex: 0 0 320px;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  background: rgba(0, 0, 0, 0.25);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  color: var(--fg);
+  transition: background 120ms, width 120ms;
+}
+.search:focus-within,
+.search.active {
+  background: var(--chip);
+}
+.search input {
+  width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
   color: var(--fg);
   font: inherit;
-  font-size: 14px;
-  outline: none;
+  font-size: 15px;
+  transition: width 120ms;
 }
-.search:focus {
-  border-color: var(--accent);
+.search:focus-within input,
+.search.active input {
+  width: 180px;
+}
+.search input::placeholder {
+  color: var(--muted);
 }
 
-.hint {
-  color: var(--muted);
-  font-size: 12px;
+.tab {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--fg);
 }
-.count {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
+.tab.selected {
+  background: var(--chip);
 }
 
+.toolbar-right {
+  position: absolute;
+  right: 24px;
+  top: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* ---- cards ---- */
 .list {
   flex: 1;
   display: flex;
-  gap: 12px;
-  padding: 6px 20px 18px;
+  gap: 16px;
+  padding: 2px 24px 20px;
   overflow-x: auto;
   overflow-y: hidden;
-  scrollbar-width: thin;
+  scrollbar-width: none;
+}
+.list::-webkit-scrollbar {
+  display: none;
 }
 
 .empty {
@@ -92,62 +134,82 @@ body,
 }
 
 .card {
-  flex: 0 0 230px;
+  flex: 0 0 218px;
   display: flex;
   flex-direction: column;
-  border-radius: 12px;
+  border-radius: 14px;
   background: var(--card);
-  border: 2px solid transparent;
+  color: var(--card-fg);
   overflow: hidden;
   cursor: default;
-  transition: background 80ms, border-color 80ms, transform 80ms;
-}
-.card:hover {
-  background: var(--card-hover);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  transition: box-shadow 100ms;
 }
 .card.selected {
-  border-color: var(--accent);
-  background: var(--card-hover);
+  box-shadow: 0 0 0 3px var(--accent), 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
 .card-head {
+  position: relative;
+  height: 44px;
+  padding: 7px 12px 0;
+  color: #fff;
+}
+.card-title {
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 12px;
-  font-size: 11px;
-  color: var(--muted);
+  flex-direction: column;
+  line-height: 1.2;
 }
-.card-head .kind {
+.card-title .kind {
+  font-size: 15px;
   font-weight: 600;
-  color: var(--fg);
 }
-.kind-link .card-head .kind {
-  color: #7fb0ff;
+.card-title .time {
+  font-size: 12px;
+  opacity: 0.85;
 }
-.kind-image .card-head .kind {
-  color: #ffb86b;
+
+.app-icon {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  background: var(--card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
 }
-.kind-files .card-head .kind {
-  color: #8be39b;
+.app-icon img {
+  width: 36px;
+  height: 36px;
+  border-radius: 8px;
+  object-fit: contain;
+}
+.app-icon span {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--card-fg);
 }
 
 .card-body {
   flex: 1;
   min-height: 0;
-  padding: 0 12px;
+  padding: 10px 12px 0;
   overflow: hidden;
 }
 .card-body pre {
   margin: 0;
   font: inherit;
-  font-size: 12.5px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.4;
   white-space: pre-wrap;
   word-break: break-word;
   overflow: hidden;
   display: -webkit-box;
-  -webkit-line-clamp: 9;
+  -webkit-line-clamp: 7;
   -webkit-box-orient: vertical;
 }
 .card-body img {
@@ -158,7 +220,23 @@ body,
 }
 
 .card-foot {
-  padding: 6px 12px 8px;
-  font-size: 11px;
-  color: var(--muted);
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 6px 10px 8px;
+  font-size: 13px;
+  color: var(--card-muted);
+}
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 7px;
+  background: var(--chip);
+  color: var(--card-muted);
+  font-size: 13px;
+  font-weight: 600;
 }

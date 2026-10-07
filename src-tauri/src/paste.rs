@@ -31,11 +31,12 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
     let target = *app.state::<PanelState>().target.lock().unwrap();
     panel::hide(app);
 
+    let app = app.clone();
     std::thread::spawn(move || {
         if let Some(pid) = target {
-            platform::activate_app(pid);
+            let _ = app.run_on_main_thread(move || platform::activate_app(pid));
         }
-        std::thread::sleep(Duration::from_millis(120));
+        std::thread::sleep(Duration::from_millis(150));
         if let Err(e) = send_paste_shortcut() {
             eprintln!("[pastel] paste shortcut failed: {e}");
         }

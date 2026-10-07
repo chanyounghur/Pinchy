@@ -1,18 +1,20 @@
 //! The bottom overlay panel.
 //!
-//! The window is created once, kept visible and transparent, and never hidden:
-//! hiding a window suspends WebKit, which breaks the slide animation. "Closed"
-//! means the webview has slid the panel out and the window ignores clicks.
+//! The window is created once and never hidden: "closed" means it is parked
+//! just below the screen edge, and opening slides the whole window up with an
+//! AppKit animation (the way Paste does it). Hiding the window would suspend
+//! WebKit and break any in-page animation.
 
-use crate::platform::{self, WorkArea};
+use crate::platform::{self, Rect};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const WINDOW: &str = "main";
 pub const PANEL_HEIGHT: f64 = 340.0;
+/// Horizontal inset from the screen edges.
+const INSET: f64 = 12.0;
+const SLIDE_SECONDS: f64 = 0.22;
 pub const SHOWN_EVENT: &str = "panel-shown";
-/// Asks the webview to play its slide-out animation and then call `hide_panel`.
-pub const HIDE_EVENT: &str = "panel-hide";
 
 #[derive(Default)]
 pub struct PanelState {
@@ -25,80 +27,81 @@ fn window(app: &AppHandle) -> Option<WebviewWindow> {
     app.get_webview_window(WINDOW)
 }
 
-/// Called once at startup: show the (transparent, click-through) window.
-pub fn init(app: &AppHandle) {
-    let Some(win) = window(app) else { return };
-    if let Ok(ptr) = win.ns_window() {
-        platform::configure_overlay_window(ptr);
-    }
-    let _ = win.set_ignore_cursor_events(true);
-    let _ = win.show();
+fn frames(screen: Rect) -> (Rect, Rect) {
+    let open = Rect {
+        x: screen.x + INSET,
+        y: screen.y,
+        w: screen.w - INSET * 2.0,
+        h: PANEL_HEIGHT,
+    };
+    let closed = Rect { y: screen.y - PANEL_HEIGHT - 24.0, ..open };
+    (open, closed)
 }
 
-fn cursor_work_area(win: &WebviewWindow) -> Option<WorkArea> {
-    if let Some(area) = platform::cursor_screen_work_area() {
-        return Some(area);
+/// Called once at startup (main thread): style the window and park it offscreen.
+pub fn init(app: &AppHandle) {
+    let Some(win) = window(app) else { return };
+    #[cfg(target_os = "macos")]
+    {
+        use window_vibrancy::{apply_vibrancy, NSVisualEffectMaterial, NSVisualEffectState};
+        let _ = apply_vibrancy(&win, NSVisualEffectMaterial::Popover, Some(NSVisualEffectState::Active), Some(18.0));
     }
-    let m = win
-        .cursor_position()
-        .ok()
-        .and_then(|p| win.monitor_from_point(p.x, p.y).ok().flatten())
-        .or_else(|| win.primary_monitor().ok().flatten())?;
-    let scale = m.scale_factor();
-    let area = m.work_area();
-    Some(WorkArea {
-        x: area.position.x as f64 / scale,
-        y: area.position.y as f64 / scale,
-        w: area.size.width as f64 / scale,
-        h: area.size.height as f64 / scale,
-    })
+    if let Ok(ptr) = win.ns_window() {
+        platform::configure_overlay_window(ptr);
+        if let Some(screen) = platform::cursor_screen_visible_frame() {
+            platform::set_window_frame(ptr, frames(screen).1);
+        }
+    }
+    let _ = win.show();
 }
 
 pub fn show(app: &AppHandle) {
-    let Some(win) = window(app) else { return };
-    let state = app.state::<PanelState>();
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        let Some(win) = window(&app) else { return };
+        let state = app.state::<PanelState>();
+        if let Some(info) = platform::frontmost_app() {
+            *state.target.lock().unwrap() = Some(info.pid);
+        }
+        *state.open.lock().unwrap() = true;
 
-    if let Some((pid, _)) = platform::frontmost_app() {
-        *state.target.lock().unwrap() = Some(pid);
-    }
-    *state.open.lock().unwrap() = true;
-
-    // Dock the panel to the bottom of the screen the cursor is on.
-    if let Some(a) = cursor_work_area(&win) {
-        let _ = win.set_size(LogicalSize::new(a.w, PANEL_HEIGHT));
-        let _ = win.set_position(LogicalPosition::new(a.x, a.y + a.h - PANEL_HEIGHT));
-    }
-
-    let _ = win.set_ignore_cursor_events(false);
-    let _ = win.show();
-    let _ = win.set_focus();
-    platform::activate_self();
-    let _ = app.emit(SHOWN_EVENT, ());
+        if let (Ok(ptr), Some(screen)) = (win.ns_window(), platform::cursor_screen_visible_frame()) {
+            let (open, closed) = frames(screen);
+            platform::set_window_frame(ptr, closed);
+            platform::animate_window_frame(ptr, open, SLIDE_SECONDS);
+        }
+        let _ = win.set_focus();
+        platform::activate_self();
+        let _ = app.emit(SHOWN_EVENT, ());
+    });
 }
 
-/// Immediate "hide": make the window click-through and give focus back.
-/// The webview calls this after its slide-out animation.
+/// Slide the panel away and hand focus back to the previous app.
 pub fn hide(app: &AppHandle) {
-    let state = app.state::<PanelState>();
-    *state.open.lock().unwrap() = false;
-    if let Some(win) = window(app) {
-        let _ = win.set_ignore_cursor_events(true);
-    }
-    let target = *state.target.lock().unwrap();
-    if let Some(pid) = target {
-        platform::activate_app(pid);
-    }
-}
-
-/// Animated hide, driven by the webview.
-pub fn request_hide(app: &AppHandle) {
-    let _ = app.emit(HIDE_EVENT, ());
+    let app = app.clone();
+    let _ = app.clone().run_on_main_thread(move || {
+        let state = app.state::<PanelState>();
+        let was_open = std::mem::replace(&mut *state.open.lock().unwrap(), false);
+        if !was_open {
+            return;
+        }
+        if let Some(win) = window(&app) {
+            if let (Ok(ptr), Some(screen)) = (win.ns_window(), platform::cursor_screen_visible_frame()) {
+                platform::animate_window_frame(ptr, frames(screen).1, SLIDE_SECONDS);
+            }
+        }
+        // Only give focus back if we still have it (not when the user clicked elsewhere).
+        let target = *state.target.lock().unwrap();
+        if let (Some(pid), true) = (target, platform::is_self_active()) {
+            platform::activate_app(pid);
+        }
+    });
 }
 
 pub fn toggle(app: &AppHandle) {
     let open = *app.state::<PanelState>().open.lock().unwrap();
     if open {
-        request_hide(app);
+        hide(app);
     } else {
         show(app);
     }

@@ -9,10 +9,11 @@ type Handler = (e: { payload: unknown }) => void;
 const handlers = new Map<string, Set<Handler>>();
 
 const MOCK_ITEMS = [
-  { id: 1, kind: "text", content: "", preview: "const panel = document.querySelector('.panel');\npanel.classList.add('open');", source_app: "Code", width: null, height: null, size: 72, created_at: Date.now() - 30_000 },
-  { id: 2, kind: "link", content: "", preview: "https://tauri.app/develop/", source_app: "Safari", width: null, height: null, size: 26, created_at: Date.now() - 600_000 },
-  { id: 3, kind: "files", content: "", preview: "report.pdf\nscreenshot.png", source_app: "Finder", width: null, height: null, size: 2, created_at: Date.now() - 7_200_000 },
-  { id: 4, kind: "text", content: "", preview: "회의록 초안입니다. 다음 주 월요일까지 검토 부탁드려요.", source_app: "Notes", width: null, height: null, size: 31, created_at: Date.now() - 86_400_000 },
+  { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "Claude", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000 },
+  { id: 2, kind: "text", content: "", preview: "fuk", source_app: "KakaoTalk", app_icon: null, app_color: "#f7d400", width: null, height: null, size: 3, created_at: Date.now() - 1_080_000 },
+  { id: 3, kind: "link", content: "", preview: "https://tauri.app/develop/", source_app: "Safari", app_icon: null, app_color: "#1f8fff", width: null, height: null, size: 26, created_at: Date.now() - 1_620_000 },
+  { id: 4, kind: "files", content: "", preview: "report.pdf\nscreenshot.png", source_app: "Finder", app_icon: null, app_color: "#3b82f6", width: null, height: null, size: 2, created_at: Date.now() - 7_200_000 },
+  { id: 5, kind: "text", content: "", preview: "회의록 초안입니다. 다음 주 월요일까지 검토 부탁드려요. 특히 3번 항목 일정이 빠듯합니다.", source_app: "Notes", app_icon: null, app_color: "#f5b400", width: null, height: null, size: 31, created_at: Date.now() - 86_400_000 },
 ];
 
 export const invoke: typeof core.invoke = isTauri

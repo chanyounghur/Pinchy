@@ -2663,8 +2663,10 @@ version = "0.1.0"
 dependencies = [
  "clipboard-rs",
  "enigo",
+ "image",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
  "rusqlite",
  "serde",
  "serde_json",
@@ -2673,6 +2675,7 @@ dependencies = [
  "tauri-build",
  "tauri-plugin-global-shortcut",
  "tauri-plugin-opener",
+ "window-vibrancy",
 ]
 
 [[package]]

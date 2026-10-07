@@ -24,14 +24,14 @@
         "skipTaskbar": true,
         "resizable": false,
         "visibleOnAllWorkspaces": true,
-        "shadow": false
+        "shadow": true
       }
     ],
     "security": {
       "csp": null,
       "assetProtocol": {
         "enable": true,
-        "scope": ["$APPDATA/images/**"]
+        "scope": ["$APPDATA/images/**", "$APPDATA/icons/**"]
       }
     }
   },
