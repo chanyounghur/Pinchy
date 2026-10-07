@@ -21,6 +21,7 @@ export const invoke: typeof core.invoke = isTauri
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
       if (cmd === "get_settings") return { shortcut: "Shift+Super+V" };
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.0", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
         return MOCK_ITEMS.filter((i) => i.preview.toLowerCase().includes(q));

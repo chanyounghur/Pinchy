@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Pinchy",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "identifier": "com.chanyounghur.pastel",
   "build": {
     "beforeDevCommand": "bun run dev",
@@ -31,7 +31,7 @@
         "title": "Pinchy 설정",
         "url": "settings.html",
         "width": 400,
-        "height": 300,
+        "height": 470,
         "visible": false,
         "resizable": false,
         "center": true
@@ -57,6 +57,18 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUzM0MzNkZGRTIyQ0JGNDEKUldSQnZ5emkvelk4NDgzYm15clhHTkF4VmlpQzl0ZnNnZjZsemhseHp3bmJGb0p0QjZHNzM4RysK",
+      "endpoints": [
+        "https://github.com/chanyounghur/Pinchy/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

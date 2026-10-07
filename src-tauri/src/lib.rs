@@ -5,6 +5,7 @@ mod panel;
 mod paste;
 mod platform;
 mod settings;
+mod updater;
 
 use db::{Db, Item};
 use settings::{Settings, SettingsStore};
@@ -120,6 +121,8 @@ fn remove_image_file(item: &Item) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::UpdateState::default())
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -156,10 +159,13 @@ pub fn run() {
             let open = MenuItemBuilder::with_id("open", "열기").build(app)?;
             let shortcut_item = MenuItemBuilder::with_id("settings", "단축키 설정…").build(app)?;
             let clear = MenuItemBuilder::with_id("clear", "히스토리 비우기").build(app)?;
+            let update = MenuItemBuilder::with_id("update", "업데이트…").build(app)?;
+            app.manage(updater::UpdateMenu(update.clone()));
             let quit = MenuItemBuilder::with_id("quit", "종료").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open)
                 .item(&shortcut_item)
+                .item(&update)
                 .separator()
                 .item(&clear)
                 .separator()
@@ -178,6 +184,7 @@ pub fn run() {
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => panel::show(app),
                     "settings" => open_settings_window(app),
+                    "update" => open_settings_window(app),
                     "clear" => {
                         let db = app.state::<Db>();
                         if let Ok(items) = db.clear() {
@@ -189,6 +196,7 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+            updater::start(app.handle().clone());
             Ok(())
         })
         .on_window_event(|window, event| {
@@ -216,7 +224,10 @@ pub fn run() {
             hide_panel,
             get_settings,
             set_shortcut,
-            set_shortcut_capturing
+            set_shortcut_capturing,
+            updater::update_status,
+            updater::check_update,
+            updater::install_update
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

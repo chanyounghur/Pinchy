@@ -93,6 +93,10 @@ button:disabled {
 .msg.err {
   color: #d64545;
 }
+.updates { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.updates h1 small { font-weight: 400; opacity: 0.6; margin-left: 8px; }
+.updates p { line-height: 1.5; }
+.update-error { margin-top: 10px; font-size: 11px; overflow-wrap: anywhere; color: #d64545; user-select: text; }
 .note {
   margin: 14px 0 0;
   font-size: 12px;

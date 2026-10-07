@@ -33,11 +33,11 @@ jobs:
           - name: macos-apple-silicon
             runner: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - name: macos-intel
             runner: macos-latest
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - name: windows-x64
             runner: windows-latest
             target: x86_64-pc-windows-msvc
@@ -65,12 +65,33 @@ jobs:
         shell: bash
         env:
           # Ad-hoc signing requires no Apple credentials. It is NOT notarization.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         run: bun run tauri build --ci --target '${{ matrix.target }}' --bundles '${{ matrix.bundles }}'
+      - name: Give macOS updater bundles unique architecture names
+        if: runner.os == 'macOS'
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          target = os.environ['BUILD_TARGET']
+          arch = 'aarch64' if target.startswith('aarch64') else 'x64'
+          folder = Path(f'src-tauri/target/{target}/release/bundle/macos')
+          for suffix in ['.app.tar.gz', '.app.tar.gz.sig']:
+              source = folder / f'Pinchy{suffix}'
+              source.rename(folder / f'Pinchy_{arch}{suffix}')
+          PY
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: installers-${{ matrix.name }}
           path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.app.tar.gz.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.sig
+            src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.sig
             src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
             src-tauri/target/${{ matrix.target }}/release/bundle/msi/*.msi
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
@@ -89,30 +110,23 @@ jobs:
         with:
           pattern: installers-*
           path: downloaded
-          merge-multiple: true
-      - name: Collect all four installers and checksums
-        run: |
-          python3 - <<'PY'
-          import hashlib
-          from pathlib import Path
-          import shutil
-          files = [p for p in Path('downloaded').rglob('*') if p.suffix in {'.dmg', '.msi', '.exe'}]
-          assert sorted(p.suffix for p in files) == ['.dmg', '.dmg', '.exe', '.msi'], files
-          assert len({p.name for p in files}) == 4, 'Duplicate installer filenames'
-          out = Path('release-assets')
-          out.mkdir()
-          sums = []
-          for p in sorted(files):
-              shutil.copy2(p, out / p.name)
-              sums.append(f'{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}')
-          (out / 'SHA256SUMS.txt').write_text('\n'.join(sums) + '\n')
-          PY
+          merge-multiple: false
+      - name: Validate updater assets and generate latest.json
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: python3 scripts/prepare-release.py downloaded release-assets "${RELEASE_TAG#v}"
       - name: Publish completed release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cat > release-notes.md <<'NOTES'
+          ## 앱 내 업데이트
+
+          - 실행 30초 후 및 6시간마다 새 버전을 확인하고 자동 다운로드합니다.
+          - 트레이의 업데이트 메뉴 또는 설정에서 확인하고, 준비되면 설치하고 재시작할 수 있습니다.
+          - 기존 0.2.x 사용자는 한 번 수동 설치해 주세요. 0.3.0부터 앱 내 업데이트가 가능합니다.
+
           ## 다운로드
 
           - macOS (Apple Silicon): `*_aarch64.dmg`

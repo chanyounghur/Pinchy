@@ -53,13 +53,23 @@ bun run tauri dev
 
 설치 파일은 `bun run tauri build`로 만들고, 결과물은 `src-tauri/target/release/bundle/`에 생깁니다. 운영체제별로 다른 코드는 `src-tauri/src/platform.rs`에 모아 두었습니다.
 
-### 릴리스
+### 앱 업데이트
+
+0.3.0부터 실행 30초 후 및 6시간마다 GitHub Releases에서 새 버전을 확인하고 백그라운드로 다운로드합니다. 트레이의 **업데이트…** 또는 설정 창에서 상태를 볼 수 있고, **업데이트 확인**으로 직접 확인할 수도 있습니다. 다운로드 및 서명 검증이 끝나면 **설치하고 재시작**을 눌러 적용하세요. 업데이트 확인 실패 시 앱과 클립보드 기능은 계속 동작합니다.
+
+0.2.x 사용자는 0.3.0 이상을 한 번 수동 설치해야 합니다. 클립보드 기록과 설정의 저장 위치는 그대로 유지됩니다.
+
+배포 시 `createUpdaterArtifacts`로 생성한 업데이트 파일과 `.sig`, 운영체제별 주소를 담은 `latest.json`을 설치 파일과 함께 올립니다. 모든 플랫폼의 빌드가 성공하고 파일 검증을 통과한 후에만 정식 릴리스를 공개합니다.
+
+업데이트 서명 개인키는 GitHub Actions Secret `TAURI_SIGNING_PRIVATE_KEY`에 저장합니다. 암호를 사용하는 키라면 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`도 설정하세요. 공개키는 `src-tauri/tauri.conf.json`에 있습니다. 개인키는 저장소에 커밋하지 말고 별도로 백업하세요. 이후 릴리스도 같은 키로 서명해야 기존 설치본에서 업데이트할 수 있습니다. 이 서명은 운영체제의 코드 서명·공증과 별개입니다.
+
+### 릴리스 배포
 
 `vX.Y.Z` 형식의 정식 버전 태그를 푸시하면 GitHub Actions가 macOS·Windows 설치 파일을 빌드해서 릴리스를 올립니다. 패치 버전도 지원하며, 프리릴리스 태그는 지원하지 않습니다.
 
 1. `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`의 버전을 맞추고 `Cargo.lock`을 갱신합니다.
 2. 커밋해서 `main`에 푸시합니다.
-3. `git tag v0.2.1 && git push origin v0.2.1`
+3. `git tag v0.3.0 && git push origin v0.3.0`
 
 Actions 탭에서 워크플로를 수동 실행하면 릴리스 없이 설치 파일만 아티팩트로 받을 수 있습니다.
 
