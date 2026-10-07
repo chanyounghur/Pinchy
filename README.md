@@ -53,6 +53,25 @@ rustup target add x86_64-pc-windows-gnu && brew install mingw-w64
 cd src-tauri && CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar cargo check --target x86_64-pc-windows-gnu
 ```
 
+## 자동 빌드·릴리스
+
+GitHub Actions의 **Build installers and release** 워크플로가 `vX.Y.0` 태그 푸시에 실행된다 (`Y > 0`). 예: `v0.2.0`, `v0.3.0`, `v1.1.0`. 패치 태그(`v0.2.1`)에는 실행되지 않으며, 메이저 전용 태그(`v1.0.0`)는 버전 검사에서 제외한다. 버전 파일 수정이나 일반 커밋 푸시만으로는 릴리스하지 않는다.
+
+1. `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`의 버전을 같은 값(예: `0.2.0`)으로 변경한다.
+2. `cargo metadata --manifest-path src-tauri/Cargo.toml --no-deps --format-version 1`로 `Cargo.lock`을 갱신한다.
+3. 변경사항을 커밋하고 `main`에 푸시한 뒤, 해당 커밋에 태그를 붙여 푸시한다.
+
+```bash
+git tag v0.2.0
+git push origin v0.2.0
+```
+
+태그와 네 버전 파일이 일치해야 한다. Apple Silicon DMG, Intel DMG, Windows x64 MSI·Setup EXE가 모두 성공하면 SHA256 체크섬과 함께 릴리스에 자동 게시된다. 기존 릴리스 자산은 덮어쓰지 않으며, 게시 실패로 초안이 남으면 해당 초안을 확인한 뒤 재시도한다.
+
+버전 변경 없이 테스트하려면 GitHub **Actions → Build installers and release → Run workflow**를 실행한다. 수동 실행은 설치 파일을 Actions 아티팩트로 14일 보관하며 공개 릴리스를 만들지 않는다.
+
+현재 macOS는 인증서가 필요 없는 임시 서명(ad-hoc)을 사용하며 Apple 공증은 하지 않는다. Windows 설치 파일도 코드 서명되지 않았다. 빌드 성공은 macOS 실기기 동작 검증을 대신하지 않는다.
+
 ## 로드맵
 
 1. [x] macOS에서 Paste 구독 대체
