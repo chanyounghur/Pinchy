@@ -114,16 +114,12 @@ jobs:
         run: |
           cat > release-notes.md <<'NOTES'
           ## 다운로드
-          - Apple Silicon Mac: `aarch64.dmg`
-          - Intel Mac: `x64.dmg`
-          - Windows x64: `setup.exe` (권장) 또는 `.msi` 중 하나
-          - 파일 무결성 확인: `SHA256SUMS.txt`
 
-          패널 열기: macOS `Shift + Command + V`, Windows `Ctrl + Shift + V`.
-          기존 Pastel 사용자는 Pastel을 종료한 뒤 Pinchy를 실행하세요. 기존 기록·설정은 유지됩니다.
+          - macOS (Apple Silicon): `*_aarch64.dmg`
+          - macOS (Intel): `*_x64.dmg`
+          - Windows: `*_x64-setup.exe` 또는 `*.msi`
 
-          macOS 파일은 임시 서명(ad-hoc)되었으며 Apple 공증은 받지 않았습니다.
-          Windows 설치 파일은 코드 서명되지 않았습니다. 운영체제의 보안 확인이 표시될 수 있습니다.
+          코드 서명이 없어서 처음 실행할 때 보안 경고가 뜰 수 있습니다. 해결 방법은 [README](https://github.com/chanyounghur/Pinchy#설치)를 참고하세요.
           NOTES
           gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft \
             --title "Pinchy $RELEASE_TAG" --notes-file release-notes.md --generate-notes
