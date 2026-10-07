@@ -25,6 +25,16 @@
         "resizable": false,
         "visibleOnAllWorkspaces": true,
         "shadow": true
+      },
+      {
+        "label": "settings",
+        "title": "Pastel 설정",
+        "url": "settings.html",
+        "width": 400,
+        "height": 250,
+        "visible": false,
+        "resizable": false,
+        "center": true
       }
     ],
     "security": {

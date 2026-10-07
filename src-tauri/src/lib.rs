@@ -4,19 +4,69 @@ mod db;
 mod panel;
 mod paste;
 mod platform;
+mod settings;
 
 use db::{Db, Item};
+use settings::{Settings, SettingsStore};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
-use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
-/// ⇧⌘V on macOS (like Paste); Ctrl+Shift+V elsewhere, since Win-key combos
-/// are mostly reserved by Windows.
-#[cfg(target_os = "macos")]
-const PANEL_MODIFIERS: Modifiers = Modifiers::SHIFT.union(Modifiers::SUPER);
-#[cfg(not(target_os = "macos"))]
-const PANEL_MODIFIERS: Modifiers = Modifiers::CONTROL.union(Modifiers::SHIFT);
+const SETTINGS_WINDOW: &str = "settings";
+
+/// Registers `shortcut` as the only global shortcut. On failure the previous
+/// one is restored and the error returned.
+fn apply_shortcut(app: &AppHandle, shortcut: &str, previous: Option<&str>) -> Result<(), String> {
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+    match gs.register(shortcut) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            if let Some(prev) = previous {
+                let _ = gs.register(prev);
+            }
+            Err(format!("단축키를 등록할 수 없어요: {e}"))
+        }
+    }
+}
+
+fn open_settings_window(app: &AppHandle) {
+    if let Some(win) = app.get_webview_window(SETTINGS_WINDOW) {
+        let _ = win.show();
+        let _ = win.set_focus();
+        platform::activate_self();
+    }
+}
+
+#[tauri::command]
+fn get_settings(store: State<SettingsStore>) -> Settings {
+    store.get()
+}
+
+#[tauri::command]
+fn set_shortcut(app: AppHandle, store: State<SettingsStore>, shortcut: String) -> Result<(), String> {
+    let shortcut = shortcut.trim().to_string();
+    if shortcut.is_empty() {
+        return Err("단축키가 비어 있어요".into());
+    }
+    let mut settings = store.get();
+    apply_shortcut(&app, &shortcut, Some(&settings.shortcut))?;
+    settings.shortcut = shortcut;
+    store.save(settings)
+}
+
+/// While the settings page is capturing keys, the global shortcut is released
+/// so pressing the current combo doesn't toggle the panel.
+#[tauri::command]
+fn set_shortcut_capturing(app: AppHandle, store: State<SettingsStore>, capturing: bool) {
+    let gs = app.global_shortcut();
+    if capturing {
+        let _ = gs.unregister_all();
+    } else {
+        let _ = gs.register(store.get().shortcut.as_str());
+    }
+}
 
 #[tauri::command]
 fn list_items(db: State<Db>, query: Option<String>, limit: Option<i64>) -> Result<Vec<Item>, String> {
@@ -73,8 +123,6 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcut(Shortcut::new(Some(PANEL_MODIFIERS), Code::KeyV))
-                .expect("register shortcut")
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
                         panel::toggle(app);
@@ -94,14 +142,24 @@ pub fn run() {
             appicon::ensure_dir(&icons_dir);
             app.manage(Db::open(&data_dir.join("pastel.db"))?);
 
+            let store = SettingsStore::load(data_dir.join("settings.json"));
+            let shortcut = store.get().shortcut;
+            app.manage(store);
+            if let Err(e) = apply_shortcut(app.handle(), &shortcut, None) {
+                eprintln!("[pastel] {e}; falling back to {}", settings::DEFAULT_SHORTCUT);
+                let _ = apply_shortcut(app.handle(), settings::DEFAULT_SHORTCUT, None);
+            }
+
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
             panel::init(app.handle());
 
-            let open = MenuItemBuilder::with_id("open", "열기  ⇧⌘V").build(app)?;
+            let open = MenuItemBuilder::with_id("open", "열기").build(app)?;
+            let shortcut_item = MenuItemBuilder::with_id("settings", "단축키 설정…").build(app)?;
             let clear = MenuItemBuilder::with_id("clear", "히스토리 비우기").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "종료").build(app)?;
             let menu = MenuBuilder::new(app)
                 .item(&open)
+                .item(&shortcut_item)
                 .separator()
                 .item(&clear)
                 .separator()
@@ -115,6 +173,7 @@ pub fn run() {
                 .show_menu_on_left_click(true)
                 .on_menu_event(|app, e| match e.id().as_ref() {
                     "open" => panel::show(app),
+                    "settings" => open_settings_window(app),
                     "clear" => {
                         let db = app.state::<Db>();
                         if let Ok(items) = db.clear() {
@@ -129,6 +188,13 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            // The settings window is reused: closing just hides it.
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == SETTINGS_WINDOW {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
             if let WindowEvent::Focused(false) = event {
                 let app = window.app_handle();
                 let open = *app.state::<panel::PanelState>().open.lock().unwrap();
@@ -143,7 +209,10 @@ pub fn run() {
             copy_item,
             delete_item,
             clear_history,
-            hide_panel
+            hide_panel,
+            get_settings,
+            set_shortcut,
+            set_shortcut_capturing
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

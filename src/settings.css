@@ -1,0 +1,89 @@
+:root {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Pretendard", "Segoe UI", sans-serif;
+  font-size: 13px;
+  color: #1c1c1e;
+  background: #f5f5f7;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color: #f2f2f7;
+    background: #1e1e20;
+  }
+}
+body {
+  margin: 0;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.page {
+  padding: 20px 24px;
+}
+h1 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.capture {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  height: 48px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: rgba(128, 128, 128, 0.08);
+  outline: none;
+  cursor: text;
+}
+.capture.capturing {
+  border-color: #1a7cff;
+  box-shadow: 0 0 0 3px rgba(26, 124, 255, 0.25);
+}
+.combo {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 1px;
+}
+.hint {
+  font-size: 12px;
+  opacity: 0.6;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+}
+button {
+  height: 28px;
+  padding: 0 14px;
+  border-radius: 7px;
+  border: 1px solid rgba(128, 128, 128, 0.35);
+  background: rgba(128, 128, 128, 0.12);
+  color: inherit;
+  font: inherit;
+}
+button.primary {
+  background: #1a7cff;
+  border-color: #1a7cff;
+  color: #fff;
+}
+button:disabled {
+  opacity: 0.4;
+}
+.msg {
+  margin-left: auto;
+  font-size: 12px;
+}
+.msg.ok {
+  color: #2e9e4f;
+}
+.msg.err {
+  color: #d64545;
+}
+.note {
+  margin: 14px 0 0;
+  font-size: 12px;
+  opacity: 0.6;
+}
