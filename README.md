@@ -55,11 +55,11 @@ bun run tauri dev
 
 ### 릴리스
 
-`vX.Y.0` 형식의 태그를 푸시하면 GitHub Actions가 macOS·Windows 설치 파일을 빌드해서 릴리스를 올립니다. 패치 태그(`vX.Y.1` 등)는 빌드하지 않습니다.
+`vX.Y.Z` 형식의 정식 버전 태그를 푸시하면 GitHub Actions가 macOS·Windows 설치 파일을 빌드해서 릴리스를 올립니다. 패치 버전도 지원하며, 프리릴리스 태그는 지원하지 않습니다.
 
 1. `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`의 버전을 맞추고 `Cargo.lock`을 갱신합니다.
 2. 커밋해서 `main`에 푸시합니다.
-3. `git tag v0.2.0 && git push origin v0.2.0`
+3. `git tag v0.2.1 && git push origin v0.2.1`
 
 Actions 탭에서 워크플로를 수동 실행하면 릴리스 없이 설치 파일만 아티팩트로 받을 수 있습니다.
 

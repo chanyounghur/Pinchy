@@ -3,7 +3,7 @@ name: Build installers and release
 on:
   push:
     tags:
-      - 'v*.*.0'
+      - 'v*.*.*'
   # Manual runs build downloadable artifacts only; they never publish a release.
   workflow_dispatch:
 

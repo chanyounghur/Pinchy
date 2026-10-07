@@ -16,8 +16,13 @@ class ReleaseVersionTests(unittest.TestCase):
         self.assertEqual(release.validate_versions(*self.manifests(), "v0.2.0"), "0.2.0")
         self.assertEqual(release.validate_versions(*self.manifests("1.12.0"), "v1.12.0"), "1.12.0")
 
-    def test_patch_major_prerelease_and_malformed_tags_are_rejected(self):
-        for tag in ["v0.2.1", "v1.0.0", "v0.2.0-beta.1", "0.2.0", "v00.2.0", "v0.02.0"]:
+    def test_patch_and_major_tags(self):
+        for version in ["0.2.1", "1.0.0", "1.12.23"]:
+            with self.subTest(version=version):
+                self.assertEqual(release.validate_versions(*self.manifests(version), f"v{version}"), version)
+
+    def test_prerelease_and_malformed_tags_are_rejected(self):
+        for tag in ["v0.2.0-beta.1", "0.2.0", "v00.2.0", "v0.02.0", "v0.2.01", "v0.2", "v0.2.0+build.1"]:
             with self.subTest(tag=tag), self.assertRaises(ValueError):
                 release.validate_versions(*self.manifests(), tag)
 

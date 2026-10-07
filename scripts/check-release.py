@@ -15,8 +15,8 @@ def validate_versions(package, tauri, cargo, lock, tag=None):
     if not re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version):
         raise ValueError(f"Expected a stable x.y.z version, got {version}")
     if tag is not None:
-        if not re.fullmatch(r"v(0|[1-9]\d*)\.[1-9]\d*\.0", tag):
-            raise ValueError("Automatic releases require vX.Y.0 with Y > 0 (no patch or major-only releases)")
+        if not re.fullmatch(r"v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", tag):
+            raise ValueError("Automatic releases require a stable vX.Y.Z tag")
         if tag != f"v{version}":
             raise ValueError(f"Tag {tag} does not match application version {version}")
     return version
