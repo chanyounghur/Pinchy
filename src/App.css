@@ -152,6 +152,7 @@ body,
 }
 
 .card {
+  position: relative;
   flex: 0 0 218px;
   display: flex;
   flex-direction: column;
@@ -161,10 +162,15 @@ body,
   overflow: hidden;
   cursor: default;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
-  transition: box-shadow 160ms ease-out;
 }
-.card.selected {
-  box-shadow: 0 0 0 3px var(--accent), 0 1px 2px rgba(0, 0, 0, 0.08);
+.card.selected::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 3px solid var(--accent);
+  border-radius: inherit;
+  z-index: 1;
+  pointer-events: none;
 }
 
 .card-head {
