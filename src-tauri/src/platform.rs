@@ -26,7 +26,7 @@ mod mac {
         NSApplicationActivationOptions, NSBitmapImageFileType, NSBitmapImageRep, NSEvent,
         NSRunningApplication, NSScreen, NSWindow, NSWindowCollectionBehavior, NSWorkspace,
     };
-    use objc2_foundation::{NSDictionary, NSPoint, NSRect, NSSize, NSString};
+    use objc2_foundation::{NSBundle, NSDictionary, NSPoint, NSRect, NSSize, NSString};
 
     fn ns_window(ptr: *mut std::ffi::c_void) -> Option<&'static NSWindow> {
         if ptr.is_null() {
@@ -87,6 +87,11 @@ mod mac {
         NSRect::new(NSPoint::new(r.x, r.y), NSSize::new(r.w, r.h))
     }
 
+    pub fn window_frame(ptr: *mut std::ffi::c_void) -> Option<Rect> {
+        let f = ns_window(ptr)?.frame();
+        Some(Rect { x: f.origin.x, y: f.origin.y, w: f.size.width, h: f.size.height })
+    }
+
     pub fn set_window_frame(ptr: *mut std::ffi::c_void, r: Rect) {
         if let Some(win) = ns_window(ptr) {
             win.setFrame_display(ns_rect(r), true);
@@ -114,6 +119,33 @@ mod mac {
         win.setCollectionBehavior(behavior);
     }
 
+    /// Bundle path of an app given its display name (for rows saved before
+    /// icons existed). Prefers a running instance, then Launch Services.
+    pub fn app_path_for_name(name: &str) -> Option<String> {
+        let ws = NSWorkspace::sharedWorkspace();
+        let running = ws.runningApplications();
+        let hit = running.iter().find(|a| {
+            a.localizedName().map(|n| n.to_string() == name).unwrap_or(false)
+        });
+        if let Some(path) = hit.and_then(|a| a.bundleURL()).and_then(|u| u.path()) {
+            return Some(path.to_string());
+        }
+        #[allow(deprecated)]
+        ws.fullPathForApplication(&NSString::from_str(name)).map(|s| s.to_string())
+    }
+
+    pub fn bundle_id_for_path(path: &str) -> Option<String> {
+        NSBundle::bundleWithPath(&NSString::from_str(path))?
+            .bundleIdentifier()
+            .map(|s| s.to_string())
+    }
+
+    pub fn order_out(ptr: *mut std::ffi::c_void) {
+        if let Some(win) = ns_window(ptr) {
+            win.orderOut(None);
+        }
+    }
+
     /// PNG bytes of an app's icon, rendered at ~128px via CGImage.
     pub fn app_icon_bytes(bundle_path: &str) -> Option<Vec<u8>> {
         let ws = NSWorkspace::sharedWorkspace();
@@ -138,10 +170,14 @@ mod other {
     pub fn activate_self() {}
     pub fn is_self_active() -> bool { true }
     pub fn cursor_screen_visible_frame() -> Option<Rect> { None }
+    pub fn window_frame(_ptr: *mut std::ffi::c_void) -> Option<Rect> { None }
     pub fn set_window_frame(_ptr: *mut std::ffi::c_void, _r: Rect) {}
     pub fn animate_window_frame(_ptr: *mut std::ffi::c_void, _r: Rect, _seconds: f64) {}
     pub fn configure_overlay_window(_ptr: *mut std::ffi::c_void) {}
     pub fn app_icon_bytes(_bundle_path: &str) -> Option<Vec<u8>> { None }
+    pub fn app_path_for_name(_name: &str) -> Option<String> { None }
+    pub fn bundle_id_for_path(_path: &str) -> Option<String> { None }
+    pub fn order_out(_ptr: *mut std::ffi::c_void) {}
 }
 
 #[cfg(not(target_os = "macos"))]

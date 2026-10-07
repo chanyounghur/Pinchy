@@ -39,7 +39,7 @@ body,
 }
 
 .panel {
-  height: 100%;
+  height: 340px; /* must match PANEL_HEIGHT in panel.rs: a shorter window clips, not reflows */
   display: flex;
   flex-direction: column;
 }

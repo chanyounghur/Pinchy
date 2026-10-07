@@ -33,6 +33,15 @@ impl AppIconCache {
         look
     }
 
+    /// For rows saved without icon info: resolve the app by display name.
+    pub fn look_by_name(&mut self, name: &str) -> Option<AppLook> {
+        let path = platform::app_path_for_name(name)?;
+        let bundle_id = platform::bundle_id_for_path(&path)
+            .unwrap_or_else(|| name.chars().filter(|c| c.is_alphanumeric()).collect());
+        let look = self.look(&bundle_id, &path);
+        look.icon.as_ref().map(|_| look.clone())
+    }
+
     fn build(&self, bundle_id: &str, bundle_path: &str) -> Option<AppLook> {
         let png_path = self.dir.join(format!("{bundle_id}.png"));
         let img = if png_path.exists() {

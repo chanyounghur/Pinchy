@@ -156,6 +156,23 @@ fn files_item(files: Vec<String>) -> NewItem {
     }
 }
 
+/// Rows saved before icons existed only have the app name; resolve what we can.
+fn backfill_icons(app: &AppHandle, icons: &mut AppIconCache) {
+    let db = app.state::<Db>();
+    let Ok(names) = db.apps_missing_icon() else { return };
+    let mut changed = false;
+    for name in names {
+        if let Some(AppLook { icon: Some(icon), color: Some(color) }) = icons.look_by_name(&name) {
+            if db.set_app_look(&name, &icon, &color).is_ok() {
+                changed = true;
+            }
+        }
+    }
+    if changed {
+        let _ = app.emit(CHANGED_EVENT, ());
+    }
+}
+
 pub fn sha256(bytes: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(bytes);
@@ -180,7 +197,9 @@ pub fn start(app: AppHandle, images_dir: PathBuf, icons_dir: PathBuf) {
                     return;
                 }
             };
-            watcher.add_handler(Handler { app, ctx, images_dir, icons: AppIconCache::new(icons_dir) });
+            let mut icons = AppIconCache::new(icons_dir);
+            backfill_icons(&app, &mut icons);
+            watcher.add_handler(Handler { app, ctx, images_dir, icons });
             watcher.start_watch();
         })
         .expect("spawn clipboard watcher");

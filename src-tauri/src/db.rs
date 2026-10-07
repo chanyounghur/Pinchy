@@ -155,6 +155,25 @@ impl Db {
         Ok(item)
     }
 
+    /// Distinct source apps of rows that have no icon yet.
+    pub fn apps_missing_icon(&self) -> rusqlite::Result<Vec<String>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT source_app FROM items WHERE app_icon IS NULL AND source_app IS NOT NULL",
+        )?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        rows.collect()
+    }
+
+    pub fn set_app_look(&self, source_app: &str, icon: &str, color: &str) -> rusqlite::Result<()> {
+        let conn = self.0.lock().unwrap();
+        conn.execute(
+            "UPDATE items SET app_icon = ?1, app_color = ?2 WHERE source_app = ?3 AND app_icon IS NULL",
+            params![icon, color, source_app],
+        )?;
+        Ok(())
+    }
+
     /// Deletes everything; returns the image items so their files can be removed.
     pub fn clear(&self) -> rusqlite::Result<Vec<Item>> {
         let conn = self.0.lock().unwrap();
