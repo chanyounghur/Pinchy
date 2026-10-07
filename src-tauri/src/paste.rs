@@ -33,8 +33,8 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
 
     let app = app.clone();
     std::thread::spawn(move || {
-        if let Some(pid) = target {
-            let _ = app.run_on_main_thread(move || platform::activate_app(pid));
+        if let Some(app_ref) = target {
+            let _ = app.run_on_main_thread(move || platform::activate_app(app_ref));
         }
         std::thread::sleep(Duration::from_millis(150));
         if let Err(e) = send_paste_shortcut() {

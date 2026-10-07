@@ -21,8 +21,20 @@ bun run tauri build    # src-tauri/target/release/bundle/ 에 .app / .dmg 생성
 
 Rust 툴체인(rustup)이 필요하다. 붙여넣기(⌘V 시뮬레이션)는 macOS 접근성 권한이 필요하며 첫 실행 때 프롬프트가 뜬다.
 
+### Windows
+
+필요한 것: Visual Studio Build Tools(C++ 데스크톱 워크로드), rustup, bun. 그다음 동일하게 `bun install && bun run tauri build`.
+단축키는 `Ctrl+Shift+V`, 배경은 아크릴, 창 애니메이션은 타이머 기반이다. 플랫폼별 코드는 `src-tauri/src/platform.rs` 한 파일에 모여 있다.
+
+Mac에서 Windows 코드를 타입체크만 하려면(링크는 안 함):
+
+```bash
+rustup target add x86_64-pc-windows-gnu && brew install mingw-w64
+cd src-tauri && CC_x86_64_pc_windows_gnu=x86_64-w64-mingw32-gcc AR_x86_64_pc_windows_gnu=x86_64-w64-mingw32-ar cargo check --target x86_64-pc-windows-gnu
+```
+
 ## 로드맵
 
 1. [x] macOS에서 Paste 구독 대체
-2. [ ] Windows 빌드 (코드는 cross-platform, 단축키 `Shift+Win+V` 등 조정 필요)
+2. [~] Windows 빌드 — 플랫폼 코드 작성 및 Mac에서 타입체크 완료, 실기기 빌드·동작 확인 필요
 3. [ ] 기기 간 동기화 (DB 서버 없이 파일 기반: iCloud Drive / Syncthing 폴더에 append-only 로그)

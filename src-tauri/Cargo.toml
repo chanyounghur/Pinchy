@@ -34,6 +34,13 @@ objc2-app-kit = { version = "0.3", features = [
 ] }
 window-vibrancy = "0.8"
 
+[target.'cfg(windows)'.dependencies]
+window-vibrancy = "0.8"
+windows = { version = "0.61", features = [
+  "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm", "Win32_UI_WindowsAndMessaging",
+  "Win32_UI_Shell", "Win32_System_Threading",
+] }
+
 [profile.release]
 codegen-units = 1
 lto = true

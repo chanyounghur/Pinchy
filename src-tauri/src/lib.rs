@@ -11,6 +11,13 @@ use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut, ShortcutState};
 
+/// ⇧⌘V on macOS (like Paste); Ctrl+Shift+V elsewhere, since Win-key combos
+/// are mostly reserved by Windows.
+#[cfg(target_os = "macos")]
+const PANEL_MODIFIERS: Modifiers = Modifiers::SHIFT.union(Modifiers::SUPER);
+#[cfg(not(target_os = "macos"))]
+const PANEL_MODIFIERS: Modifiers = Modifiers::CONTROL.union(Modifiers::SHIFT);
+
 #[tauri::command]
 fn list_items(db: State<Db>, query: Option<String>, limit: Option<i64>) -> Result<Vec<Item>, String> {
     db.list(query.as_deref().unwrap_or(""), limit.unwrap_or(200))
@@ -66,7 +73,7 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcut(Shortcut::new(Some(Modifiers::SHIFT | Modifiers::SUPER), Code::KeyV))
+                .with_shortcut(Shortcut::new(Some(PANEL_MODIFIERS), Code::KeyV))
                 .expect("register shortcut")
                 .with_handler(|app, _shortcut, event| {
                     if event.state == ShortcutState::Pressed {
