@@ -8,8 +8,18 @@ certificate="$(cd "$(dirname "$0")" && pwd)/certs/pinchy-code-signing.pem"
 
 if [[ "${1:-}" == cleanup ]]; then
   if [[ -f "$keychain" ]]; then
-    sudo security remove-trusted-cert -d "$certificate"
-    security delete-keychain "$keychain"
+    # Trust-settings removal can block in SecurityAgent on headless runners.
+    # Bound it so private-key deletion still runs; the runner is disposable.
+    python3 - "$certificate" "$keychain" <<'PY_CLEANUP'
+import subprocess
+import sys
+try:
+    subprocess.run(["sudo", "security", "remove-trusted-cert", "-d", sys.argv[1]],
+                   check=True, timeout=15)
+except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
+    print("::warning::Trust cleanup deferred to disposable runner teardown")
+subprocess.run(["security", "delete-keychain", sys.argv[2]], check=True, timeout=30)
+PY_CLEANUP
   fi
   rm -f "$RUNNER_TEMP/pinchy-signing.p12"
   exit 0

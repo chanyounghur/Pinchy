@@ -69,6 +69,16 @@ jobs:
           MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
           MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
         run: bash scripts/macos-signing.sh
+      - name: Test stable macOS signing identity
+        if: runner.os == 'macOS'
+        run: |
+          for name in true false; do
+            cp "/usr/bin/$name" "$RUNNER_TEMP/pinchy-$name"
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --identifier com.chanyounghur.pastel --timestamp=none "$RUNNER_TEMP/pinchy-$name"
+            bash scripts/verify-macos-signing.sh "$RUNNER_TEMP/pinchy-$name"
+            codesign --display --requirements - "$RUNNER_TEMP/pinchy-$name" > "$RUNNER_TEMP/pinchy-$name.requirements"
+          done
+          cmp "$RUNNER_TEMP/pinchy-true.requirements" "$RUNNER_TEMP/pinchy-false.requirements"
       - name: Build installers
         shell: bash
         env:
@@ -107,6 +117,7 @@ jobs:
           if-no-files-found: error
           retention-days: 14
       - name: Remove macOS signing keychain
+        timeout-minutes: 2
         if: always() && runner.os == 'macOS'
         run: bash scripts/macos-signing.sh cleanup
 
