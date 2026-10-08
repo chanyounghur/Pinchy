@@ -11,7 +11,7 @@
 - Windows: `*-setup.exe` (또는 `.msi`)
 - macOS: Apple Silicon은 `aarch64.dmg`, Intel은 `x64.dmg`
 
-설치 파일에 코드 서명이 없어서 처음 실행할 때 경고가 뜰 수 있습니다. Windows에서는 "추가 정보 → 실행"을 누르면 됩니다. macOS에서는 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르거나, 터미널에서 아래 명령을 한 번 실행하세요.
+macOS 설치 파일은 고정된 자가 서명 인증서로 서명하지만 Apple 공증은 받지 않았습니다. Windows도 신뢰된 배포 서명이 없어 처음 실행할 때 경고가 뜰 수 있습니다. Windows에서는 "추가 정보 → 실행"을 누르면 됩니다. macOS에서는 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르거나, 터미널에서 아래 명령을 한 번 실행하세요.
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Pinchy.app
@@ -64,6 +64,14 @@ bun run tauri dev
 배포 시 `createUpdaterArtifacts`로 생성한 업데이트 파일과 `.sig`, 운영체제별 주소를 담은 `latest.json`을 설치 파일과 함께 올립니다. 모든 플랫폼의 빌드가 성공하고 파일 검증을 통과한 후에만 정식 릴리스를 공개합니다.
 
 업데이트 서명 개인키는 GitHub Actions Secret `TAURI_SIGNING_PRIVATE_KEY`에 저장합니다. 암호를 사용하는 키라면 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`도 설정하세요. 공개키는 `src-tauri/tauri.conf.json`에 있습니다. 개인키는 저장소에 커밋하지 말고 별도로 백업하세요. 이후 릴리스도 같은 키로 서명해야 기존 설치본에서 업데이트할 수 있습니다. 이 서명은 운영체제의 코드 서명·공증과 별개입니다.
+
+### macOS 공통 코드 서명
+
+Mac 릴리스는 `scripts/certs/pinchy-code-signing.pem`의 자가 서명 인증서를 계속 사용합니다. GitHub Secrets의 `MACOS_SIGNING_CERTIFICATE`는 암호화된 PKCS#12 파일의 base64 값이며, `MACOS_SIGNING_CERTIFICATE_PASSWORD`는 그 암호입니다. 개인키와 암호는 저장소에 넣지 않습니다.
+
+빌드마다 임시 키체인에 인증서를 가져와 코드 서명 용도로만 신뢰하고, 설치 파일 생성 후 공개 인증서와 실제 앱 서명이 일치하는지 확인합니다. 키체인은 작업 종료 시 삭제합니다. 인증서가 없거나 다르면 빌드를 실패시키며 임시 서명으로 대체하지 않습니다.
+
+이 서명은 Apple Developer ID나 공증이 아니므로 Gatekeeper 경고를 없애지 않습니다. 기존 임시 서명 앱에서 전환할 때 접근성 권한을 다시 허용해야 할 수 있습니다. 이후에도 같은 인증서·개인키와 번들 식별자를 유지하세요. 인증서 교체는 서명 정체성을 바꾸므로 기존 키를 안전하게 백업해야 합니다. 사용자 Mac에 인증서를 신뢰하도록 설치할 필요는 없습니다.
 
 ### 릴리스 배포
 

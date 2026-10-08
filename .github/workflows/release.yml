@@ -63,14 +63,21 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Test selection scrolling
         run: node scripts/test_selection_scroll.mjs
+      - name: Import persistent macOS signing identity
+        if: runner.os == 'macOS'
+        env:
+          MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: bash scripts/macos-signing.sh
       - name: Build installers
         shell: bash
         env:
-          # Ad-hoc signing requires no Apple credentials. It is NOT notarization.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
         run: bun run tauri build --ci --target '${{ matrix.target }}' --bundles '${{ matrix.bundles }}'
+      - name: Verify macOS code signature
+        if: runner.os == 'macOS'
+        run: bash scripts/verify-macos-signing.sh 'src-tauri/target/${{ matrix.target }}/release/bundle/macos/Pinchy.app'
       - name: Give macOS updater bundles unique architecture names
         if: runner.os == 'macOS'
         env:
@@ -99,6 +106,9 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*-setup.exe
           if-no-files-found: error
           retention-days: 14
+      - name: Remove macOS signing keychain
+        if: always() && runner.os == 'macOS'
+        run: bash scripts/macos-signing.sh cleanup
 
   publish:
     if: github.event_name == 'push'
@@ -135,7 +145,7 @@ jobs:
           - macOS (Intel): `*_x64.dmg`
           - Windows: `*_x64-setup.exe` 또는 `*.msi`
 
-          코드 서명이 없어서 처음 실행할 때 보안 경고가 뜰 수 있습니다. 해결 방법은 [README](https://github.com/chanyounghur/Pinchy#설치)를 참고하세요.
+          macOS는 자가 서명이며 Apple 공증을 받지 않아 처음 실행할 때 보안 경고가 뜰 수 있습니다. Windows도 신뢰된 배포 서명이 없어 경고가 뜰 수 있습니다. 해결 방법은 [README](https://github.com/chanyounghur/Pinchy#설치)를 참고하세요.
           NOTES
           gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft \
             --title "Pinchy $RELEASE_TAG" --notes-file release-notes.md --generate-notes
