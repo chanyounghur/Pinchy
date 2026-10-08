@@ -1,6 +1,7 @@
 mod appicon;
 mod clipboard;
 mod db;
+mod link_preview;
 mod panel;
 mod paste;
 mod platform;
@@ -130,6 +131,9 @@ fn hide_panel(app: AppHandle) {
 }
 
 fn remove_image_file(item: &Item) {
+    if let Some(path) = &item.og_image {
+        let _ = std::fs::remove_file(path);
+    }
     if item.kind == "image" {
         let _ = std::fs::remove_file(&item.content);
     }
@@ -174,6 +178,7 @@ pub fn run() {
                 let _ = apply_shortcut(app.handle(), settings::DEFAULT_SHORTCUT, None);
             }
 
+            link_preview::start(app.handle().clone(), images_dir.clone());
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
             panel::init(app.handle());
 

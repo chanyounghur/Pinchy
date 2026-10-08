@@ -14,6 +14,8 @@ type Item = {
   height: number | null;
   size: number;
   created_at: number;
+  og_title: string | null;
+  og_image: string | null;
 };
 
 const KIND_LABEL: Record<Item["kind"], string> = {
@@ -34,9 +36,31 @@ function timeAgo(ms: number) {
 }
 
 function footerText(item: Item) {
+  if (item.kind === "link") return item.og_title || item.og_image ? "미리보기 저장됨" : linkDomain(item.content);
   if (item.kind === "image") return `${item.width} × ${item.height}`;
   if (item.kind === "files") return `파일 ${item.size}개`;
   return `${item.size.toLocaleString()}자`;
+}
+
+function linkDomain(url: string) {
+  try { return new URL(url.trim()).hostname; } catch { return "링크"; }
+}
+
+function LinkPreview({ item }: { item: Item }) {
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  const hasImage = item.og_image && failedImage !== item.og_image;
+  return (
+    <div className={`link-preview ${hasImage ? "with-image" : "without-image"}`}>
+      {hasImage ? (
+        <img className="link-cover" src={convertFileSrc(item.og_image!)} alt="" draggable={false}
+          onError={() => setFailedImage(item.og_image)} />
+      ) : <div className="link-placeholder" aria-hidden="true">↗</div>}
+      <div className="link-meta">
+        <div className="link-domain">{linkDomain(item.content)}</div>
+        <div className="link-title">{item.og_title || item.content.trim()}</div>
+      </div>
+    </div>
+  );
 }
 
 const SearchIcon = () => (
@@ -305,9 +329,11 @@ export default function App() {
                 )}
               </div>
             </div>
-            <div className="card-body">
+            <div className={`card-body ${item.kind === "link" ? "link-body" : ""}`}>
               {item.kind === "image" ? (
                 <img src={convertFileSrc(item.content)} alt="" draggable={false} />
+              ) : item.kind === "link" ? (
+                <LinkPreview item={item} />
               ) : (
                 <pre>{item.preview}</pre>
               )}

@@ -37,7 +37,9 @@ macOS에서는 다른 앱에 붙여넣기 위해 접근성 권한이 필요합�
 
 ### 데이터 위치
 
-기록은 로컬에만 저장되고 외부로 전송되지 않습니다.
+기록과 링크 미리보기는 로컬에 저장됩니다. 링크를 복사하면 해당 공개 웹사이트에 접속해 OG 제목과 이미지를 가져옵니다. 다운로드한 미리보기는 앱을 다시 켜거나 오프라인일 때도 재사용하며, 제목으로도 검색할 수 있습니다. 로그인 정보나 브라우저 쿠키는 보내지 않고, 내부 네트워크 주소는 미리보기를 가져오지 않습니다. 미리보기를 가져올 수 없으면 원본 주소를 표시합니다.
+
+링크 기록을 삭제하거나 히스토리를 비우면 저장된 미리보기 이미지도 함께 삭제됩니다.
 
 - macOS: `~/Library/Application Support/com.chanyounghur.pastel/`
 - Windows: `%APPDATA%\com.chanyounghur.pastel\`
@@ -69,7 +71,7 @@ bun run tauri dev
 
 1. `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`의 버전을 맞추고 `Cargo.lock`을 갱신합니다.
 2. 커밋해서 `main`에 푸시합니다.
-3. `git tag v0.3.1 && git push origin v0.3.1`
+3. `git tag v0.3.2 && git push origin v0.3.2`
 
 Actions 탭에서 워크플로를 수동 실행하면 릴리스 없이 설치 파일만 아티팩트로 받을 수 있습니다.
 
