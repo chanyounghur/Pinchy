@@ -8,8 +8,10 @@
 
 [Releases](https://github.com/chanyounghur/Pinchy/releases)에서 운영체제에 맞는 파일을 받으세요.
 
-- Windows: `*-setup.exe` (또는 `.msi`)
-- macOS: Apple Silicon은 `aarch64.dmg`, Intel은 `x64.dmg`
+- Windows (x64): `Pinchy-버전-Windows.exe`
+- macOS (Apple Silicon): `Pinchy-버전-macOS.dmg`
+
+새 릴리스는 Intel Mac 및 MSI 설치 파일을 제공하지 않습니다.
 
 macOS 설치 파일은 고정된 자가 서명 인증서로 서명하지만 Apple 공증은 받지 않았습니다. Windows도 신뢰된 배포 서명이 없어 처음 실행할 때 경고가 뜰 수 있습니다. Windows에서는 "추가 정보 → 실행"을 누르면 됩니다. macOS에서는 시스템 설정 → 개인정보 보호 및 보안에서 "그래도 열기"를 누르거나, 터미널에서 아래 명령을 한 번 실행하세요.
 
@@ -53,7 +55,7 @@ bun install
 bun run tauri dev
 ```
 
-설치 파일은 `bun run tauri build`로 만들고, 결과물은 `src-tauri/target/release/bundle/`에 생깁니다. 운영체제별로 다른 코드는 `src-tauri/src/platform.rs`에 모아 두었습니다.
+설치 파일은 `bun run tauri build`로 만들고, 결과물은 `src-tauri/target/release/bundle/`에 생깁니다. Windows는 NSIS EXE, macOS는 앱과 DMG를 생성합니다. 배포용 macOS 빌드는 `--target aarch64-apple-darwin`을 사용합니다. 릴리스 게시 시 파일명을 위 형식으로 정리하고 자동 업데이트 주소에도 반영합니다. 운영체제별로 다른 코드는 `src-tauri/src/platform.rs`에 모아 두었습니다.
 
 ### 앱 업데이트
 

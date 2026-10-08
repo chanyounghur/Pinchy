@@ -16,11 +16,14 @@ def prepare(source, destination, version):
     if len({p.name for p in files}) != len(files):
         raise ValueError("Duplicate release asset names")
     installers = [p for p in files if p.suffix in {".dmg", ".exe", ".msi"}]
-    if sorted(p.suffix for p in installers) != [".dmg", ".dmg", ".exe", ".msi"]:
-        raise ValueError("Expected two macOS installers and two Windows installers")
+    if sorted(p.suffix for p in installers) != [".dmg", ".exe"]:
+        raise ValueError("Expected one Apple Silicon DMG and one Windows EXE")
+    dmg = next(p for p in installers if p.suffix == ".dmg")
+    if not dmg.name.endswith("_aarch64.dmg"):
+        raise ValueError("Expected an Apple Silicon DMG")
+    names = {dmg.name: f"Pinchy-{version}-macOS.dmg"}
     patterns = {
         "darwin-aarch64": "*_aarch64.app.tar.gz",
-        "darwin-x86_64": "*_x64.app.tar.gz",
         "windows-x86_64": "*_x64-setup.exe",
     }
     platforms = {}
@@ -32,13 +35,19 @@ def prepare(source, destination, version):
         signature = Path(str(artifact) + ".sig").read_text(encoding="utf-8").strip()
         if not signature:
             raise ValueError(f"Empty signature for {platform}")
+        name = (f"Pinchy-{version}-Windows.exe" if platform == "windows-x86_64"
+                else f"Pinchy-{version}-macOS.app.tar.gz")
+        names[artifact.name] = name
+        names[artifact.name + ".sig"] = name + ".sig"
         platforms[platform] = {
-            "url": f"https://github.com/chanyounghur/Pinchy/releases/download/v{version}/{quote(artifact.name)}",
+            "url": f"https://github.com/chanyounghur/Pinchy/releases/download/v{version}/{quote(name)}",
             "signature": signature,
         }
+    if set(p.name for p in files) != set(names):
+        raise ValueError("Unexpected release assets")
     destination.mkdir(parents=True, exist_ok=False)
     for artifact in files:
-        shutil.copy2(artifact, destination / artifact.name)
+        shutil.copy2(artifact, destination / names[artifact.name])
     feed = {"version": version, "notes": f"Pinchy {version}", "platforms": platforms}
     (destination / "latest.json").write_text(json.dumps(feed, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     sums = [f"{hashlib.sha256(p.read_bytes()).hexdigest()}  {p.name}" for p in sorted(destination.iterdir())]
