@@ -22,7 +22,7 @@ export const invoke: typeof core.invoke = isTauri
   ? core.invoke
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
-      if (cmd === "get_settings") return { shortcut: "Shift+Super+V" };
+      if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V" };
       if (cmd === "get_autostart") return mockAutostart;
       if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
       if (cmd === "update_status") return { phase: "idle", current_version: "0.3.2", version: null, error: null };

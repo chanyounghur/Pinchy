@@ -5,10 +5,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 #[cfg(target_os = "macos")]
-pub const DEFAULT_SHORTCUT: &str = "Shift+Super+V";
-/// Win-key combos are mostly reserved by Windows.
+pub const DEFAULT_SHORTCUT: &str = "Alt+Super+V";
 #[cfg(not(target_os = "macos"))]
-pub const DEFAULT_SHORTCUT: &str = "Ctrl+Shift+V";
+pub const DEFAULT_SHORTCUT: &str = "Super+Alt+V";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
