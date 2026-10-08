@@ -25,7 +25,7 @@ export const invoke: typeof core.invoke = isTauri
       if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V" };
       if (cmd === "get_autostart") return mockAutostart;
       if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
-      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.2", version: null, error: null };
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.3", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
         return MOCK_ITEMS.filter((i) => `${i.preview} ${i.og_title ?? ""}`.toLowerCase().includes(q));

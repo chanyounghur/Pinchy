@@ -1,6 +1,6 @@
 [package]
 name = "pinchy"
-version = "0.3.2"
+version = "0.3.3"
 description = "Clipboard history manager"
 authors = ["Chanyoung Hur <ruben@kakao.com>"]
 edition = "2021"
