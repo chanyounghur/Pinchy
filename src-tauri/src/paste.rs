@@ -37,6 +37,18 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
             let _ = app.run_on_main_thread(move || platform::activate_app(app_ref));
         }
         std::thread::sleep(Duration::from_millis(150));
+        // Enigo resolves Unicode keys through macOS TIS/TSM APIs, which
+        // assert that they run on the main dispatch queue. Keep the delay
+        // off the UI thread, but create/use/drop Enigo on the main thread.
+        #[cfg(target_os = "macos")]
+        if let Err(e) = app.run_on_main_thread(|| {
+            if let Err(e) = send_paste_shortcut() {
+                eprintln!("[pinchy] paste shortcut failed: {e}");
+            }
+        }) {
+            eprintln!("[pinchy] scheduling paste shortcut failed: {e}");
+        }
+        #[cfg(not(target_os = "macos"))]
         if let Err(e) = send_paste_shortcut() {
             eprintln!("[pinchy] paste shortcut failed: {e}");
         }
@@ -45,6 +57,10 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
 }
 
 fn send_paste_shortcut() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    if objc2::MainThreadMarker::new().is_none() {
+        return Err("paste shortcut must run on the macOS main thread".into());
+    }
     let mut enigo = Enigo::new(&Settings::default()).map_err(|e| e.to_string())?;
     #[cfg(target_os = "macos")]
     let modifier = Key::Meta;
