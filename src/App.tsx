@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke, convertFileSrc, listen } from "./tauri";
+import { createSelectionScroller } from "./selectionScroll";
 import "./App.css";
 
 type Item = {
@@ -91,6 +92,18 @@ export default function App() {
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
   const revealSelectionRef = useRef(true);
   const stopScrollingRef = useRef(() => {});
+  const selectionScrollerRef = useRef<ReturnType<typeof createSelectionScroller> | null>(null);
+
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const scroller = createSelectionScroller(list);
+    selectionScrollerRef.current = scroller;
+    return () => {
+      scroller.stop();
+      selectionScrollerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     const list = listRef.current;
@@ -105,7 +118,11 @@ export default function App() {
       velocity = 0;
       list.scrollTo({ left: list.scrollLeft, behavior: "instant" });
     };
-    stopScrollingRef.current = stop;
+    const stopAll = () => {
+      stop();
+      selectionScrollerRef.current?.stop();
+    };
+    stopScrollingRef.current = stopAll;
     const tick = (time: number) => {
       const before = list.scrollLeft;
       list.scrollLeft += velocity * Math.min(time - lastTime, 32) / 1000;
@@ -117,6 +134,7 @@ export default function App() {
       if (e.pointerType !== "mouse") return;
       if (lastPointer?.x === e.clientX && lastPointer.y === e.clientY) return;
       lastPointer = { x: e.clientX, y: e.clientY };
+      selectionScrollerRef.current?.stop();
       const rect = list.getBoundingClientRect();
       const edge = Math.min(64, rect.width / 4);
       const x = e.clientX - rect.left;
@@ -136,13 +154,13 @@ export default function App() {
       const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
       if (!delta || list.scrollWidth <= list.clientWidth) return;
       e.preventDefault();
-      stop();
+      stopAll();
       revealSelectionRef.current = false;
       const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? 16
         : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? list.clientWidth : 1;
       list.scrollLeft += delta * unit;
     };
-    const leave = () => { lastPointer = null; stop(); };
+    const leave = () => { lastPointer = null; stopAll(); };
     list.addEventListener("pointermove", move);
     list.addEventListener("pointerleave", leave);
     list.addEventListener("pointercancel", leave);
@@ -151,7 +169,7 @@ export default function App() {
     window.addEventListener("blur", leave);
     window.addEventListener("keydown", stop);
     return () => {
-      stop();
+      stopAll();
       list.removeEventListener("pointermove", move);
       list.removeEventListener("pointerleave", leave);
       list.removeEventListener("pointercancel", leave);
@@ -193,7 +211,7 @@ export default function App() {
     };
   }, [query, refresh]);
 
-  // Scroll only the horizontal list; cancel an old destination when selection changes.
+  // Update the destination without restarting the animation on every repeated key.
   useEffect(() => {
     const list = listRef.current;
     const el = list?.querySelector<HTMLElement>(".card.selected");
@@ -207,10 +225,7 @@ export default function App() {
       if (card.left < viewport.left + margin) target += card.left - viewport.left - margin;
       else if (card.right > viewport.right - margin) target += card.right - viewport.right + margin;
       target = Math.max(0, Math.min(target, list.scrollWidth - list.clientWidth));
-      list.scrollTo({
-        left: target,
-        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth",
-      });
+      selectionScrollerRef.current?.to(target);
     };
     let frame = 0;
     const scheduleReveal = () => {
@@ -223,7 +238,6 @@ export default function App() {
     return () => {
       observer.disconnect();
       cancelAnimationFrame(frame);
-      list.scrollTo({ left: list.scrollLeft, behavior: "instant" });
     };
   }, [selected, items]);
 

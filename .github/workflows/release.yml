@@ -61,6 +61,8 @@ jobs:
           key: ${{ matrix.target }}
       - name: Install frontend dependencies
         run: bun install --frozen-lockfile
+      - name: Test selection scrolling
+        run: node scripts/test_selection_scroll.mjs
       - name: Build installers
         shell: bash
         env:

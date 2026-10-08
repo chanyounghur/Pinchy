@@ -18,6 +18,14 @@ const MOCK_ITEMS = [
   { id: 5, kind: "text", content: "", preview: "회의록 초안입니다. 다음 주 월요일까지 검토 부탁드려요. 특히 3번 항목 일정이 빠듯합니다.", source_app: "Notes", app_icon: null, app_color: "#f5b400", width: null, height: null, size: 31, created_at: Date.now() - 86_400_000 },
 ];
 
+// A longer browser-only sample list for trying held-arrow navigation locally.
+const browserItems = !isTauri && new URLSearchParams(window.location.search).get("demo") === "scroll"
+  ? Array.from({ length: 8 }, (_, batch) => MOCK_ITEMS.map((item, index) => ({
+      ...item,
+      id: batch * MOCK_ITEMS.length + index + 1,
+    }))).flat()
+  : MOCK_ITEMS;
+
 export const invoke: typeof core.invoke = isTauri
   ? core.invoke
   : (async (cmd: string, args?: Record<string, unknown>) => {
@@ -25,10 +33,10 @@ export const invoke: typeof core.invoke = isTauri
       if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V" };
       if (cmd === "get_autostart") return mockAutostart;
       if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
-      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.3", version: null, error: null };
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.4", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
-        return MOCK_ITEMS.filter((i) => `${i.preview} ${i.og_title ?? ""}`.toLowerCase().includes(q));
+        return browserItems.filter((i) => `${i.preview} ${i.og_title ?? ""}`.toLowerCase().includes(q));
       }
       return undefined;
     }) as typeof core.invoke;

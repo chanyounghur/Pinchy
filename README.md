@@ -71,7 +71,7 @@ bun run tauri dev
 
 1. `package.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`의 버전을 맞추고 `Cargo.lock`을 갱신합니다.
 2. 커밋해서 `main`에 푸시합니다.
-3. `git tag v0.3.3 && git push origin v0.3.3`
+3. `git tag v0.3.4 && git push origin v0.3.4`
 
 Actions 탭에서 워크플로를 수동 실행하면 릴리스 없이 설치 파일만 아티팩트로 받을 수 있습니다.
 
