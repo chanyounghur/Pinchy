@@ -30,8 +30,10 @@ struct Source {
 
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) {
+        let app = self.app.clone();
+        let db = app.state::<Db>();
+        let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
-            let db = self.app.state::<Db>();
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
@@ -159,6 +161,7 @@ fn files_item(files: Vec<String>) -> NewItem {
 /// Rows saved before icons existed only have the app name; resolve what we can.
 fn backfill_icons(app: &AppHandle, icons: &mut AppIconCache) {
     let db = app.state::<Db>();
+    let _files = db.1.lock().unwrap();
     let Ok(names) = db.apps_missing_icon() else { return };
     let mut changed = false;
     for name in names {

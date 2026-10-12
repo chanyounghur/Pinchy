@@ -23,7 +23,9 @@ impl AppIconCache {
 
     pub fn look(&mut self, bundle_id: &str, bundle_path: &str) -> AppLook {
         if let Some(l) = self.looks.get(bundle_id) {
-            return l.clone();
+            if l.icon.as_ref().is_none_or(|path| Path::new(path).exists()) {
+                return l.clone();
+            }
         }
         let look = self.build(bundle_id, bundle_path).unwrap_or_else(|| {
             eprintln!("[pinchy] no icon for {bundle_id} ({bundle_path})");

@@ -59,6 +59,8 @@ jobs:
         run: bun install --frozen-lockfile
       - name: Test selection scrolling
         run: node scripts/test_selection_scroll.mjs
+      - name: Test history retention and local data handling
+        run: cargo test --manifest-path src-tauri/Cargo.toml --lib --target '${{ matrix.target }}'
       - name: Import persistent macOS signing identity
         if: runner.os == 'macOS'
         env:
@@ -138,6 +140,14 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cat > release-notes.md <<'NOTES'
+          ## 히스토리 보관
+
+          - 보관 기간(일)과 최대 용량(MB)을 각각 체크박스와 숫자 입력으로 설정할 수 있습니다.
+          - 현재 사용량·기록 수 표시와 히스토리 전체 제거를 추가했습니다.
+          - 기간 또는 용량 조건을 넘으면 오래된 기록부터 정리하고 저장 공간을 회수합니다.
+          - **기존 설치에도 기본 30일·1GB 보존 조건이 적용됩니다. 업데이트 후 첫 실행부터 자동 정리하며, 삭제한 기록은 복구할 수 없습니다.** 설정에서 각 조건을 변경하거나 해제할 수 있습니다.
+          - 복사했던 외부 원본 파일은 삭제하지 않습니다.
+
           ## 앱 내 업데이트
 
           - 실행 30초 후 및 6시간마다 새 버전을 확인하고 자동 다운로드합니다.

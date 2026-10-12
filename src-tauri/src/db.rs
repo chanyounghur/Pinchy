@@ -54,7 +54,9 @@ fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
     })
 }
 
-pub struct Db(pub Mutex<Connection>);
+// Lock file operations before the connection whenever a mutation also touches
+// cached files. This keeps image capture, previews and retention consistent.
+pub struct Db(pub Mutex<Connection>, pub Mutex<()>);
 
 impl Db {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
@@ -84,7 +86,7 @@ impl Db {
                 conn.execute(&format!("ALTER TABLE items ADD COLUMN {col} TEXT"), [])?;
             }
         }
-        Ok(Db(Mutex::new(conn)))
+        Ok(Db(Mutex::new(conn), Mutex::new(())))
     }
 
     /// Inserts a new item, or bumps an existing one with the same hash to the top.
@@ -153,9 +155,11 @@ impl Db {
     }
 
     pub fn delete(&self, id: i64) -> rusqlite::Result<Option<Item>> {
+        let _files = self.1.lock().unwrap();
         let item = self.get(id)?;
         let conn = self.0.lock().unwrap();
         conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
+        if let Some(item) = &item { crate::storage::remove_item_images(&conn, item); }
         Ok(item)
     }
 
@@ -178,17 +182,6 @@ impl Db {
         Ok(())
     }
 
-    /// Deletes everything; returns the image items so their files can be removed.
-    pub fn clear(&self) -> rusqlite::Result<Vec<Item>> {
-        let conn = self.0.lock().unwrap();
-        let images: Vec<Item> = conn
-            .prepare(&format!("SELECT {COLUMNS} FROM items WHERE kind = 'image' OR og_image IS NOT NULL"))?
-            .query_map([], row_to_item)?
-            .collect::<rusqlite::Result<_>>()?;
-        conn.execute("DELETE FROM items", [])?;
-        Ok(images)
-    }
-
     /// Successful previews are permanent; failed requests can retry after an hour.
     pub fn pending_link(&self) -> rusqlite::Result<Option<Item>> {
         let conn = self.0.lock().unwrap();
@@ -203,6 +196,7 @@ impl Db {
 
     /// Keep the existence check and file write under the same lock as deletion.
     pub fn save_link_preview(&self, item: &Item, title: Option<&str>, image: Option<(&Path, &[u8])>) -> Result<(), String> {
+        let _files = self.1.lock().unwrap();
         let conn = self.0.lock().unwrap();
         let exists = conn.prepare("SELECT 1 FROM items WHERE id = ?1 AND content = ?2")
             .and_then(|mut s| s.exists(params![item.id, item.content])).map_err(|e| e.to_string())?;
@@ -259,9 +253,7 @@ mod tests {
             assert_eq!(results.len(), 1);
             assert_eq!(results[0].content, "https://example.com");
             assert_eq!(std::fs::read(results[0].og_image.as_ref().unwrap()).unwrap(), b"cached image");
-            let removed = db.clear().unwrap();
-            assert_eq!(removed.len(), 1);
-            assert_eq!(removed[0].og_image.as_deref(), image.to_str());
+            crate::storage::clear(&db).unwrap();
             assert!(db.list("", 10).unwrap().is_empty());
         }
         std::fs::remove_file(&image).unwrap();

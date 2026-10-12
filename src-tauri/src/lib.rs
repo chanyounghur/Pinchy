@@ -6,6 +6,7 @@ mod panel;
 mod paste;
 mod platform;
 mod settings;
+mod storage;
 mod updater;
 
 use db::{Db, Item};
@@ -69,10 +70,9 @@ fn set_shortcut(app: AppHandle, store: State<SettingsStore>, shortcut: String) -
     if shortcut.is_empty() {
         return Err("단축키가 비어 있어요".into());
     }
-    let mut settings = store.get();
+    let settings = store.get();
     apply_shortcut(&app, &shortcut, Some(&settings.shortcut))?;
-    settings.shortcut = shortcut;
-    store.save(settings)
+    store.update(|settings| settings.shortcut = shortcut)
 }
 
 /// While the settings page is capturing keys, the global shortcut is released
@@ -109,34 +109,23 @@ fn copy_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
 
 #[tauri::command]
 fn delete_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
-    if let Some(item) = db.delete(id).map_err(|e| e.to_string())? {
-        remove_image_file(&item);
-    }
+    db.delete(id).map_err(|e| e.to_string())?;
     let _ = app.emit(clipboard::CHANGED_EVENT, ());
     Ok(())
 }
 
 #[tauri::command]
-fn clear_history(app: AppHandle, db: State<Db>) -> Result<(), String> {
-    for item in db.clear().map_err(|e| e.to_string())? {
-        remove_image_file(&item);
-    }
-    let _ = app.emit(clipboard::CHANGED_EVENT, ());
-    Ok(())
+async fn clear_history(app: AppHandle) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let result = storage::clear(&app.state::<Db>());
+        let _ = app.emit(clipboard::CHANGED_EVENT, ());
+        result
+    }).await.map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
 fn hide_panel(app: AppHandle) {
     panel::hide(&app);
-}
-
-fn remove_image_file(item: &Item) {
-    if let Some(path) = &item.og_image {
-        let _ = std::fs::remove_file(path);
-    }
-    if item.kind == "image" {
-        let _ = std::fs::remove_file(&item.content);
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -180,6 +169,7 @@ pub fn run() {
 
             link_preview::start(app.handle().clone(), images_dir.clone());
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
+            storage::start(app.handle().clone());
             panel::init(app.handle());
 
             let open = MenuItemBuilder::with_id("open", "열기").build(app)?;
@@ -220,8 +210,9 @@ pub fn run() {
                     "settings" => open_settings_window(app),
                     "clear" => {
                         let db = app.state::<Db>();
-                        if let Ok(items) = db.clear() {
-                            items.iter().for_each(remove_image_file);
+                        if let Err(error) = storage::clear(&db) {
+                            eprintln!("[pinchy] clear history failed: {error}");
+                            let _ = app.emit("storage-error", error);
                         }
                         let _ = app.emit(clipboard::CHANGED_EVENT, ());
                     }
@@ -260,6 +251,8 @@ pub fn run() {
             set_shortcut_capturing,
             get_autostart,
             set_autostart,
+            storage::storage_usage,
+            storage::set_retention,
             updater::update_status,
             updater::check_update,
             updater::install_update

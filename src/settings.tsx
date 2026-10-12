@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from "react";
 import ReactDOM from "react-dom/client";
 import { invoke, listen } from "./tauri";
 import "./settings.css";
+import StorageSettings from "./StorageSettings";
 
 const IS_MAC = navigator.platform.startsWith("Mac");
 
@@ -201,6 +202,7 @@ function SettingsPage() {
       </div>
       <p className="note">{IS_MAC ? "수정자 키(⌘ ⌃ ⌥ ⇧)" : "Ctrl, Alt, Shift, Win 중"} 하나 이상과 일반 키 하나를 조합하세요.</p>
       <Autostart />
+      <StorageSettings />
       <Updates />
     </div>
   );

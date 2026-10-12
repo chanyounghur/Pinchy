@@ -111,4 +111,25 @@ button:disabled {
   margin: 14px 0 0;
   font-size: 12px;
   opacity: 0.6;
+  line-height: 1.5;
 }
+.storage { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.storage-usage { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; padding: 12px; border-radius: 10px; background: rgba(128, 128, 128, 0.08); }
+.storage-usage strong { font-size: 20px; margin-left: auto; }
+.storage-usage .hint { width: 100%; text-align: right; }
+.retention-fields { border: 0; padding: 0; margin: 16px 0 0; min-width: 0; }
+.retention-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; }
+.retention-label { display: flex; align-items: center; gap: 7px; }
+.retention-label input { accent-color: #c64735; width: 16px; height: 16px; margin: 0; }
+.retention-value { display: flex; align-items: center; gap: 8px; }
+.retention-value input { width: 92px; box-sizing: border-box; padding: 7px 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 7px; font: inherit; color: inherit; background: rgba(128, 128, 128, 0.08); }
+.retention-value span { width: 24px; font-size: 12px; }
+.retention-value input:disabled { opacity: 0.4; }
+.retention-value input[aria-invalid="true"] { border-color: #d64545; }
+.storage-detail { font-size: 11px; margin-top: 8px; }
+.storage-actions { flex-wrap: wrap; }
+button.danger { color: #c64735; }
+.storage-confirm { padding: 12px; margin-top: 14px; border: 1px solid rgba(198, 71, 53, 0.5); border-radius: 9px; }
+.storage-confirm p { margin: 0 0 8px; line-height: 1.5; font-size: 12px; }
+.storage-message { font-size: 12px; color: #2e9e4f; }
+@media (prefers-color-scheme: dark) { button.danger { color: #ff9585; } }

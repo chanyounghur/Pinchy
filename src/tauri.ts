@@ -8,6 +8,8 @@ const isTauri = "__TAURI_INTERNALS__" in window;
 type Handler = (e: { payload: unknown }) => void;
 const handlers = new Map<string, Set<Handler>>();
 let mockAutostart = false;
+let mockRetention = { days_enabled: true, days: 30, size_enabled: true, max_mb: 1024 };
+let mockUsage = { bytes: 249561088, count: 1240 };
 
 const MOCK_ITEMS = [
   { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "Claude", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000 },
@@ -30,10 +32,13 @@ export const invoke: typeof core.invoke = isTauri
   ? core.invoke
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
-      if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V" };
+      if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V", retention: mockRetention };
+      if (cmd === "storage_usage") return mockUsage;
+      if (cmd === "set_retention") { mockRetention = args?.retention as typeof mockRetention; return { removed: 0, usage: mockUsage }; }
+      if (cmd === "clear_history") { mockUsage = { bytes: 49152, count: 0 }; return; }
       if (cmd === "get_autostart") return mockAutostart;
       if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
-      if (cmd === "update_status") return { phase: "idle", current_version: "0.3.4", version: null, error: null };
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.4.0", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
         return browserItems.filter((i) => `${i.preview} ${i.og_title ?? ""}`.toLowerCase().includes(q));
