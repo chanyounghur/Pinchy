@@ -127,6 +127,30 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
 // Only owned cache files may be deleted, and shared references are respected.
 pub fn remove_item_images(conn: &Connection, item: &Item) {
     let Ok(directory) = root(conn) else { return };
+    let image_directory = directory.join("images");
+    if std::fs::symlink_metadata(&image_directory).is_ok_and(|m| m.file_type().is_symlink()) {
+        return;
+    }
+    let Ok(image_directory) = std::fs::canonicalize(image_directory) else {
+        return;
+    };
+    let Ok(mut statement) = conn.prepare(
+        "SELECT content FROM items WHERE kind = 'image' UNION SELECT og_image FROM items WHERE og_image IS NOT NULL"
+    ) else { return };
+    let Ok(paths) = statement.query_map([], |row| row.get::<_, String>(0)) else {
+        return;
+    };
+    let mut referenced = HashSet::new();
+    for path in paths {
+        let Ok(path) = path else { return };
+        match std::fs::canonicalize(path) {
+            Ok(path) => {
+                referenced.insert(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return,
+        }
+    }
     for path in item
         .og_image
         .iter()
@@ -134,14 +158,13 @@ pub fn remove_item_images(conn: &Connection, item: &Item) {
         .chain((item.kind == "image").then_some(item.content.as_str()))
     {
         let path = Path::new(path);
-        if path.parent() != Some(directory.join("images").as_path()) {
+        let Ok(canonical) = std::fs::canonicalize(path) else {
+            continue;
+        };
+        if canonical.parent() != Some(image_directory.as_path()) {
             continue;
         }
-        let referenced = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM items WHERE (kind = 'image' AND content = ?1) OR og_image = ?1)",
-            params![path.to_string_lossy()], |r| r.get::<_, bool>(0),
-        ).unwrap_or(true);
-        if !referenced {
+        if !referenced.contains(&canonical) {
             let _ = std::fs::remove_file(path);
         }
     }
@@ -150,18 +173,26 @@ pub fn remove_item_images(conn: &Connection, item: &Item) {
 fn clean_unused(conn: &Connection, remaining: &[StoredItem]) -> Result<(), String> {
     let mut referenced = HashSet::new();
     for item in remaining {
-        if let Some(path) = &item.image {
-            referenced.insert(PathBuf::from(path));
-        }
-        if let Some(path) = &item.og_image {
-            referenced.insert(PathBuf::from(path));
-        }
-        if let Some(path) = &item.app_icon {
-            referenced.insert(PathBuf::from(path));
+        for path in item
+            .image
+            .iter()
+            .chain(&item.og_image)
+            .chain(&item.app_icon)
+        {
+            // SQLite resolves directory aliases (e.g. /var -> /private/var
+            // on macOS). Compare real paths on both sides before deletion.
+            match std::fs::canonicalize(path) {
+                Ok(path) => {
+                    referenced.insert(path);
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.to_string()),
+            }
         }
     }
     for path in cache_files(&root(conn)?)? {
-        if !referenced.contains(&path) {
+        let canonical = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
+        if !referenced.contains(&canonical) {
             std::fs::remove_file(path)
                 .map_err(|e| format!("저장 파일을 정리하지 못했어요: {e}"))?;
         }
@@ -538,6 +569,84 @@ mod tests {
         };
         assert!(enforce(&mut f.db().0.lock().unwrap(), &policy, 100 * DAY).is_err());
         assert_eq!(f.db().list("", 10).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn different_spellings_of_the_same_cache_path_are_preserved() {
+        let f = Fixture::new();
+        f.add("keep", 99 * DAY, 100);
+        let alias = f
+            .directory
+            .join("images")
+            .join("..")
+            .join("images/keep.png");
+        f.db()
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE items SET content = ?1",
+                params![alias.to_string_lossy()],
+            )
+            .unwrap();
+        let result = f.run(
+            Retention {
+                days_enabled: true,
+                ..unlimited()
+            },
+            100 * DAY,
+        );
+        assert_eq!(result.removed, 0);
+        assert!(f.directory.join("images/keep.png").exists());
+    }
+
+    #[test]
+    fn individual_delete_preserves_shared_alias_and_removes_last_reference() {
+        let f = Fixture::new();
+        f.add("first", DAY, 100);
+        f.add("second", 2 * DAY, 0);
+        let alias = f.directory.join("images/../images/first.png");
+        f.db()
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE items SET kind = 'image', content = ?1 WHERE hash = 'second'",
+                params![alias.to_string_lossy()],
+            )
+            .unwrap();
+        let records = f.db().list("", 10).unwrap();
+        f.db().delete(records[1].id).unwrap();
+        assert!(alias.exists());
+        f.db().delete(records[0].id).unwrap();
+        assert!(!alias.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_symlink_alias_does_not_delete_referenced_images() {
+        let f = Fixture::new();
+        f.add("keep", 99 * DAY, 100);
+        std::os::unix::fs::symlink(&f.directory, f.directory.join("alias")).unwrap();
+        let alias = f.directory.join("alias/images/keep.png");
+        f.db()
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE items SET content = ?1",
+                params![alias.to_string_lossy()],
+            )
+            .unwrap();
+        let result = f.run(
+            Retention {
+                days_enabled: true,
+                ..unlimited()
+            },
+            100 * DAY,
+        );
+        assert_eq!(result.removed, 0);
+        assert!(f.directory.join("images/keep.png").exists());
     }
 
     #[test]
