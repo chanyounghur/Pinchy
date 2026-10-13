@@ -9,6 +9,13 @@ use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 use std::time::Duration;
 use tauri::{AppHandle, Manager};
 
+/// `kVK_ANSI_V`: the physical V key. Sending the virtual keycode keeps ⌘V
+/// independent of the active input source; resolving `Key::Unicode('v')`
+/// fails under non-Latin sources such as Korean and falls back to keycode 0
+/// (A), which turns the paste into ⌘A.
+#[cfg(target_os = "macos")]
+const KVK_ANSI_V: u16 = 0x09;
+
 pub fn copy_to_clipboard(item: &Item) -> Result<(), String> {
     let ctx = ClipboardContext::new().map_err(|e| e.to_string())?;
     match item.kind.as_str() {
@@ -37,9 +44,9 @@ pub fn paste(app: &AppHandle, item: &Item) -> Result<(), String> {
             let _ = app.run_on_main_thread(move || platform::activate_app(app_ref));
         }
         std::thread::sleep(Duration::from_millis(150));
-        // Enigo resolves Unicode keys through macOS TIS/TSM APIs, which
-        // assert that they run on the main dispatch queue. Keep the delay
-        // off the UI thread, but create/use/drop Enigo on the main thread.
+        // Enigo touches AppKit and, for Unicode keys, macOS TIS/TSM APIs,
+        // which assert that they run on the main dispatch queue. Keep the
+        // delay off the UI thread, but create/use/drop Enigo on the main thread.
         #[cfg(target_os = "macos")]
         if let Err(e) = app.run_on_main_thread(|| {
             if let Err(e) = send_paste_shortcut() {
@@ -68,7 +75,11 @@ fn send_paste_shortcut() -> Result<(), String> {
     let modifier = Key::Control;
 
     enigo.key(modifier, Direction::Press).map_err(|e| e.to_string())?;
-    enigo.key(Key::Unicode('v'), Direction::Click).map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    let pasted = enigo.raw(KVK_ANSI_V, Direction::Click);
+    #[cfg(not(target_os = "macos"))]
+    let pasted = enigo.key(Key::Unicode('v'), Direction::Click);
+    pasted.map_err(|e| e.to_string())?;
     enigo.key(modifier, Direction::Release).map_err(|e| e.to_string())?;
     Ok(())
 }

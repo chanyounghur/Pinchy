@@ -38,7 +38,7 @@ export const invoke: typeof core.invoke = isTauri
       if (cmd === "clear_history") { mockUsage = { bytes: 49152, count: 0 }; return; }
       if (cmd === "get_autostart") return mockAutostart;
       if (cmd === "set_autostart") { mockAutostart = Boolean(args?.enabled); return mockAutostart; }
-      if (cmd === "update_status") return { phase: "idle", current_version: "0.4.1", version: null, error: null };
+      if (cmd === "update_status") return { phase: "idle", current_version: "0.4.2", version: null, error: null };
       if (cmd === "list_items") {
         const q = String(args?.query ?? "").toLowerCase();
         return browserItems.filter((i) => `${i.preview} ${i.og_title ?? ""}`.toLowerCase().includes(q));
