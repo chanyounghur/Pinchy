@@ -9,7 +9,8 @@ use clipboard_rs::{
 };
 use clipboard_rs::common::RustImage;
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -28,12 +29,31 @@ struct Source {
     look: AppLook,
 }
 
+/// Hash of text that Pinchy itself puts on the clipboard and must not record,
+/// such as the sharing key.
+static IGNORED: Mutex<Option<String>> = Mutex::new(None);
+
+/// Copies `text` without adding it to the history.
+pub fn copy_unrecorded(text: &str) -> Result<(), String> {
+    *IGNORED.lock().unwrap() = Some(sha256(text.as_bytes()));
+    ClipboardContext::new()
+        .and_then(|ctx| ctx.set_text(text.to_string()))
+        .map_err(|e| e.to_string())
+}
+
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) {
         let app = self.app.clone();
         let db = app.state::<Db>();
         let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
+            {
+                let mut ignored = IGNORED.lock().unwrap();
+                if ignored.as_deref() == Some(item.hash.as_str()) {
+                    *ignored = None;
+                    return;
+                }
+            }
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
@@ -93,29 +113,34 @@ impl Handler {
 
     fn image_item(&self, img: clipboard_rs::RustImageData) -> Option<NewItem> {
         let png = img.to_png().ok()?;
-        let bytes = png.get_bytes();
-        let hash = sha256(bytes);
-        let path = self.images_dir.join(format!("{hash}.png"));
-        if !path.exists() {
-            std::fs::write(&path, bytes).ok()?;
-        }
         let (w, h) = img.get_size();
-        Some(NewItem {
-            kind: "image".into(),
-            content: path.to_string_lossy().into_owned(),
-            preview: format!("{w} × {h} 이미지"),
-            hash,
-            source_app: None,
-            app_icon: None,
-            app_color: None,
-            width: Some(w as i64),
-            height: Some(h as i64),
-            size: bytes.len() as i64,
-        })
+        png_item(&self.images_dir, png.get_bytes(), w, h)
     }
 }
 
-fn text_item(text: String) -> NewItem {
+/// Stores PNG bytes in the image cache, named by content hash.
+pub fn png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32) -> Option<NewItem> {
+    let hash = sha256(bytes);
+    let path = images_dir.join(format!("{hash}.png"));
+    if !path.exists() {
+        std::fs::write(&path, bytes).ok()?;
+    }
+    Some(NewItem {
+        kind: "image".into(),
+        content: path.to_string_lossy().into_owned(),
+        preview: format!("{w} × {h} 이미지"),
+        hash,
+        source_app: None,
+        app_icon: None,
+        app_color: None,
+        width: Some(w as i64),
+        height: Some(h as i64),
+        size: bytes.len() as i64,
+        origin_device: None,
+    })
+}
+
+pub fn text_item(text: String) -> NewItem {
     let trimmed = text.trim();
     let is_link = (trimmed.starts_with("http://") || trimmed.starts_with("https://"))
         && !trimmed.contains(char::is_whitespace);
@@ -130,6 +155,7 @@ fn text_item(text: String) -> NewItem {
         app_color: None,
         width: None,
         height: None,
+        origin_device: None,
     }
 }
 
@@ -155,6 +181,7 @@ fn files_item(files: Vec<String>) -> NewItem {
         app_color: None,
         width: None,
         height: None,
+        origin_device: None,
     }
 }
 

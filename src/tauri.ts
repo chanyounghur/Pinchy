@@ -10,10 +10,11 @@ const handlers = new Map<string, Set<Handler>>();
 let mockAutostart = false;
 let mockRetention = { days_enabled: true, days: 30, size_enabled: true, max_mb: 1024 };
 let mockUsage = { bytes: 249561088, count: 1240 };
+let mockShare: { name: string; server: string; token: string; key: string } | null = null;
 
 const MOCK_ITEMS = [
   { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "Claude", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000 },
-  { id: 2, kind: "text", content: "", preview: "fuk", source_app: "KakaoTalk", app_icon: null, app_color: "#f7d400", width: null, height: null, size: 3, created_at: Date.now() - 1_080_000 },
+  { id: 2, kind: "text", content: "", preview: "회사에서 보낸 메모", source_app: "회사 맥", app_icon: null, app_color: "#c64735", width: null, height: null, size: 9, created_at: Date.now() - 1_080_000, origin_device: "회사 맥" },
   { id: 3, kind: "link", content: "https://tauri.app/develop/", preview: "https://tauri.app/develop/", og_title: "Tauri — Build smaller, faster desktop apps", og_image: "/brand/pinchy-wordmark.png", source_app: "Safari", app_icon: null, app_color: "#1f8fff", width: null, height: null, size: 26, created_at: Date.now() - 1_620_000 },
   { id: 6, kind: "link", content: "https://example.com/notes", preview: "https://example.com/notes", og_title: null, og_image: null, source_app: "Chrome", app_icon: null, app_color: "#788fbc", width: null, height: null, size: 25, created_at: Date.now() - 1_800_000 },
   { id: 4, kind: "files", content: "", preview: "report.pdf\nscreenshot.png", source_app: "Finder", app_icon: null, app_color: "#3b82f6", width: null, height: null, size: 2, created_at: Date.now() - 7_200_000 },
@@ -32,7 +33,14 @@ export const invoke: typeof core.invoke = isTauri
   ? core.invoke
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
-      if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V", retention: mockRetention };
+      if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V", retention: mockRetention, share: mockShare };
+      if (cmd === "share_status") return mockShare ? { state: "connected", name: "집 맥", peers: ["회사 맥"] } : { state: "off" };
+      if (cmd === "default_device_name") return "Chanyoung’s MacBook Air";
+      if (cmd === "set_share_name") { if (mockShare) mockShare = { ...mockShare, name: String(args?.name ?? "").trim() }; return mockShare?.name; }
+      if (cmd === "generate_share_key") return "mock-key-mock-key-mock-key-mock-key-mock-key";
+      if (cmd === "connect_share") { mockShare = args?.config as typeof mockShare; return { state: "connected", name: "집 맥", peers: ["회사 맥"] }; }
+      if (cmd === "disconnect_share") { mockShare = null; return; }
+      if (cmd === "send_item") return 1;
       if (cmd === "storage_usage") return mockUsage;
       if (cmd === "set_retention") { mockRetention = args?.retention as typeof mockRetention; return { removed: 0, usage: mockUsage }; }
       if (cmd === "clear_history") { mockUsage = { bytes: 49152, count: 0 }; return; }

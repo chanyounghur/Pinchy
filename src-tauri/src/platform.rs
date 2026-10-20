@@ -38,6 +38,20 @@ pub fn panel_frames(screen: Rect, height: f64, inset: f64) -> (Rect, Rect) {
 }
 
 /// Collapse on macOS; preserve a valid client area on Windows.
+/// The name the user gave this computer, e.g. "Chanyoung's MacBook Air".
+pub fn computer_name() -> Option<String> {
+    #[cfg(target_os = "macos")]
+    let name = std::process::Command::new("scutil")
+        .args(["--get", "ComputerName"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+    #[cfg(not(target_os = "macos"))]
+    let name = std::env::var("COMPUTERNAME").or_else(|_| std::env::var("HOSTNAME")).ok();
+    name.map(|n| n.trim().to_string()).filter(|n| !n.is_empty())
+}
+
 pub fn collapse_frame(r: Rect) -> Rect {
     if cfg!(target_os = "macos") {
         Rect { h: 1.0, ..r }

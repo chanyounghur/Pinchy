@@ -6,6 +6,7 @@ mod panel;
 mod paste;
 mod platform;
 mod settings;
+mod share;
 mod storage;
 mod updater;
 
@@ -148,6 +149,7 @@ pub fn run() {
                 .build(),
         )
         .manage(panel::PanelState::default())
+        .manage(share::ShareState::default())
         .setup(|app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -168,6 +170,7 @@ pub fn run() {
             }
 
             link_preview::start(app.handle().clone(), images_dir.clone());
+            share::start(app.handle().clone(), images_dir.clone());
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
             storage::start(app.handle().clone());
             panel::init(app.handle());
@@ -253,6 +256,14 @@ pub fn run() {
             set_autostart,
             storage::storage_usage,
             storage::set_retention,
+            share::share_status,
+            share::generate_share_key,
+            share::default_device_name,
+            share::set_share_name,
+            share::copy_secret,
+            share::connect_share,
+            share::disconnect_share,
+            share::send_item,
             updater::update_status,
             updater::check_update,
             updater::install_update

@@ -133,3 +133,21 @@ button.danger { color: #c64735; }
 .storage-confirm p { margin: 0 0 8px; line-height: 1.5; font-size: 12px; }
 .storage-message { font-size: 12px; color: #2e9e4f; }
 @media (prefers-color-scheme: dark) { button.danger { color: #ff9585; } }
+.share { margin-top: 24px; padding-top: 18px; border-top: 1px solid rgba(128, 128, 128, 0.25); }
+.share h1 { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.share-state { font-size: 12px; font-weight: 500; opacity: 0.7; }
+.share-state.connected { color: #2e9e4f; opacity: 1; }
+.share-state.error { color: #d64545; opacity: 1; }
+.share-fields { border: 0; padding: 0; margin: 0; min-width: 0; }
+.share-fields label { display: flex; flex-direction: column; gap: 5px; margin-top: 10px; font-size: 12px; font-weight: 600; }
+.share-fields input { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 7px; font: inherit; font-weight: 400; color: inherit; background: rgba(128, 128, 128, 0.08); user-select: text; }
+.share-key-row { display: flex; gap: 6px; }
+.share-name { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; font-size: 12px; font-weight: 600; }
+.share-name input { flex: 1; min-width: 0; box-sizing: border-box; padding: 7px 8px; border: 1px solid rgba(128, 128, 128, 0.4); border-radius: 7px; font: inherit; font-weight: 400; color: inherit; background: rgba(128, 128, 128, 0.08); user-select: text; }
+.share-key-row button { flex-shrink: 0; height: auto; }
+.share-summary { display: grid; gap: 6px; padding: 12px; border-radius: 10px; background: rgba(128, 128, 128, 0.08); }
+.share-summary div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.share-summary span { opacity: 0.6; flex-shrink: 0; }
+.share-summary strong { font-weight: 600; overflow-wrap: anywhere; text-align: right; }
+.share code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: rgba(128, 128, 128, 0.15); user-select: text; }
+@media (prefers-color-scheme: dark) { .share-state.connected { color: #5fd37f; } .share-state.error { color: #ff9585; } }

@@ -17,6 +17,7 @@ type Item = {
   created_at: number;
   og_title: string | null;
   og_image: string | null;
+  origin_device: string | null;
 };
 
 const KIND_LABEL: Record<Item["kind"], string> = {
@@ -87,6 +88,8 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [toast, setToast] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const toastTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
@@ -200,6 +203,7 @@ export default function App() {
         revealSelectionRef.current = true;
         setQuery("");
         setSelected(0);
+        setToast(null);
         refresh("");
         listRef.current?.scrollTo({ left: 0 });
         focusInput();
@@ -245,6 +249,21 @@ export default function App() {
   const paste = (item: Item | undefined) => item && invoke("paste_item", { id: item.id });
   const copy = (item: Item | undefined) => item && invoke("copy_item", { id: item.id });
   const remove = (item: Item | undefined) => item && invoke("delete_item", { id: item.id });
+  const showToast = (next: { kind: "ok" | "err"; text: string }) => {
+    clearTimeout(toastTimer.current);
+    setToast(next);
+    toastTimer.current = setTimeout(() => setToast(null), next.kind === "ok" ? 2500 : 6000);
+  };
+  const send = async (item: Item | undefined) => {
+    if (!item) return;
+    showToast({ kind: "ok", text: "보내는 중…" });
+    try {
+      const count = await invoke<number>("send_item", { id: item.id });
+      showToast({ kind: "ok", text: `다른 기기 ${count}대로 보냈어요` });
+    } catch (e) {
+      showToast({ kind: "err", text: String(e) });
+    }
+  };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
     revealSelectionRef.current = true;
@@ -269,7 +288,8 @@ export default function App() {
         break;
       case "Enter":
         e.preventDefault();
-        if (mod) copy(items[selected]);
+        if (e.shiftKey && !mod) void send(items[selected]);
+        else if (mod) copy(items[selected]);
         else paste(items[selected]);
         break;
       case "Backspace":
@@ -308,6 +328,7 @@ export default function App() {
           클립보드 히스토리
         </div>
         <div className="toolbar-right">
+          {toast && <span className={`toast ${toast.kind}`} role="status" title={toast.text}>{toast.text}</span>}
           <span className="count">{items.length}</span>
         </div>
       </div>
@@ -353,6 +374,7 @@ export default function App() {
               )}
             </div>
             <div className="card-foot">
+              {item.origin_device && <span className="origin" title={`${item.origin_device}에서 받음`}>↓ {item.origin_device}</span>}
               <span>{footerText(item)}</span>
               {i < 9 && (
                 <span className="badge">

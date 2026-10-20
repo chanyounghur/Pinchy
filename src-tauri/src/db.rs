@@ -18,6 +18,8 @@ pub struct Item {
     pub created_at: i64,
     pub og_title: Option<String>,
     pub og_image: Option<String>,
+    /// Name of the device this item was received from, for shared items.
+    pub origin_device: Option<String>,
 }
 
 pub struct NewItem {
@@ -31,10 +33,11 @@ pub struct NewItem {
     pub width: Option<i64>,
     pub height: Option<i64>,
     pub size: i64,
+    pub origin_device: Option<String>,
 }
 
 const COLUMNS: &str =
-    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image";
+    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image, origin_device";
 
 fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -51,6 +54,7 @@ fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
         created_at: r.get(10)?,
         og_title: r.get(11)?,
         og_image: r.get(12)?,
+        origin_device: r.get(13)?,
     })
 }
 
@@ -78,7 +82,7 @@ impl Db {
              CREATE INDEX IF NOT EXISTS idx_items_created ON items(created_at DESC);",
         )?;
         // Columns added after the first release.
-        for col in ["app_icon", "app_color", "og_title", "og_image", "og_checked"] {
+        for col in ["app_icon", "app_color", "og_title", "og_image", "og_checked", "origin_device"] {
             let exists: bool = conn
                 .prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = ?1")?
                 .exists(params![col])?;
@@ -103,16 +107,17 @@ impl Db {
                     "UPDATE items SET created_at = ?1,
                        source_app = COALESCE(?2, source_app),
                        app_icon = COALESCE(?3, app_icon),
-                       app_color = COALESCE(?4, app_color)
-                     WHERE id = ?5",
-                    params![now, item.source_app, item.app_icon, item.app_color, id],
+                       app_color = COALESCE(?4, app_color),
+                       origin_device = COALESCE(?5, origin_device)
+                     WHERE id = ?6",
+                    params![now, item.source_app, item.app_icon, item.app_color, item.origin_device, id],
                 )?;
                 Ok(false)
             }
             None => {
                 conn.execute(
-                    "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at, origin_device)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                     params![
                         item.kind,
                         item.content,
@@ -124,7 +129,8 @@ impl Db {
                         item.width,
                         item.height,
                         item.size,
-                        now
+                        now,
+                        item.origin_device
                     ],
                 )?;
                 Ok(true)
@@ -230,7 +236,7 @@ mod tests {
         NewItem { kind: "link".into(), content: "https://example.com".into(),
             preview: "https://example.com".into(), hash: "test-link".into(),
             source_app: None, app_icon: None, app_color: None,
-            width: None, height: None, size: 19 }
+            width: None, height: None, size: 19, origin_device: None }
     }
 
     #[test]

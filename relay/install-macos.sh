@@ -54,6 +54,8 @@ cat > "$PLIST" <<EOF
 	</array>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<key>PINCHY_RELAY_DATA_DIR</key>
+		<string>$DATA</string>
 		<key>PINCHY_RELAY_LISTEN</key>
 		<string>$LISTEN</string>
 		<key>PINCHY_RELAY_DOMAIN</key>

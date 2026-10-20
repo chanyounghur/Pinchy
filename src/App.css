@@ -130,6 +130,20 @@ body,
   color: var(--muted);
   font-size: 13px;
 }
+.toast {
+  max-width: 420px;
+  margin-right: 12px;
+  padding: 4px 10px;
+  border-radius: 7px;
+  background: var(--chip);
+  color: var(--fg);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.toast.err { color: #d64545; }
+@media (prefers-color-scheme: dark) { .toast.err { color: #ff9585; } }
 
 /* ---- cards ---- */
 .list {
@@ -288,3 +302,9 @@ body,
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .kind-link .badge { flex-shrink: 0; }
+.card-foot .origin {
+  margin-right: auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: #c64735; font-weight: 600;
+}
+@media (prefers-color-scheme: dark) { .card-foot .origin { color: #ff9585; } }

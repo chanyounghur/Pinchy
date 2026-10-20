@@ -370,6 +370,7 @@ mod tests {
                     width: None,
                     height: None,
                     size: image_bytes as i64,
+                    origin_device: None,
                 })
                 .unwrap();
             self.db()

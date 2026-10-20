@@ -14,6 +14,19 @@ pub const DEFAULT_SHORTCUT: &str = "Super+Alt+V";
 pub struct Settings {
     pub shortcut: String,
     pub retention: Retention,
+    /// Relay connection for sharing with other devices; `None` when off.
+    pub share: Option<ShareConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareConfig {
+    /// Shown on the other devices next to what this device sends.
+    #[serde(default)]
+    pub name: String,
+    pub server: String,
+    pub token: String,
+    /// Base64url key that all of the user's devices share.
+    pub key: String,
 }
 
 #[cfg(test)]
@@ -112,6 +125,7 @@ impl Default for Settings {
         Self {
             shortcut: DEFAULT_SHORTCUT.into(),
             retention: Retention::default(),
+            share: None,
         }
     }
 }
