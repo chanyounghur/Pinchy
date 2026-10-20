@@ -1,8 +1,8 @@
 # Pinchy Relay
 
-여러 컴퓨터의 Pinchy가 텍스트, 링크, 이미지를 주고받을 때 거쳐 가는 중계 서버입니다. 한 기기가 보낸 항목은 등록된 다른 모든 기기의 우편함에 들어가고, 모든 기기가 받아 가면 삭제됩니다. 받지 않은 항목은 7일 뒤 삭제됩니다.
+여러 컴퓨터의 Pinchy가 텍스트, 링크, 이미지를 주고받을 때 거쳐 가는 중계 서버입니다. 한 기기가 보낸 항목은 연결된 다른 모든 기기의 우편함에 들어가고, 모든 기기가 받아 가면 삭제됩니다. 받지 않은 항목은 7일 뒤 삭제됩니다.
 
-내용은 각 기기의 Pinchy가 공유 키로 암호화해서 보냅니다(XChaCha20-Poly1305). 서버는 암호문, 크기, 기기 이름만 알고 내용은 읽을 수 없습니다. 공유 키는 서버로 보내지 않습니다.
+내용과 기기 이름은 각 기기의 Pinchy가 기기끼리만 아는 공유 키로 암호화합니다(XChaCha20-Poly1305). 서버는 암호문과 크기만 알고, 공유 키는 서버를 거쳐 가더라도 서버가 풀 수 없는 형태로만 전달됩니다.
 
 ```bash
 curl https://<도메인>/health
@@ -38,32 +38,55 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 
 처음에는 `--staging`과 임시 `--cache-dir`로 발급이 되는지 먼저 확인하세요. 운영 환경은 같은 도메인에서 검증에 여러 번 실패하면 한동안 발급을 막습니다. 인증서 저장 폴더를 유지하면 재시작할 때 다시 발급받지 않습니다.
 
-## 기기 등록
+## 기기 연결
 
-Pinchy를 연결할 기기마다 토큰을 하나씩 만듭니다. 서버가 쓰는 데이터 폴더와 같은 폴더를 보도록, 서버를 실행하는 계정에서 실행하세요.
+서버에는 기기를 등록하는 명령이 없습니다. 기기는 모두 Pinchy 설정 → **기기 간 공유**에서 연결합니다.
+
+1. **첫 기기**: 연결된 기기가 하나도 없으면 서버가 로그에 첫 연결 코드를 출력합니다.
+
+   ```
+   [pinchy-relay] first device code: 4821-1937-6604 (valid 30 minutes; ...)
+   ```
+
+   첫 기기에서 서버 주소와 이 코드를 입력하면 연결되고, 공유 키는 그 기기에서 만들어집니다. 코드는 한 번만 쓸 수 있고 30분 뒤 만료되며, 5번 틀리면 폐기됩니다. 연결된 기기가 없는 동안에는 만료되거나 폐기될 때마다 새 코드를 출력합니다.
+2. **다른 기기**: 연결된 기기에서 **기기 추가**를 누르면 `37-4821-1937` 같은 코드가 10분 동안 표시됩니다. 새 기기에서 서버 주소와 이 코드를 입력하면 연결됩니다.
+
+   두 기기는 이 코드로 SPAKE2 키 교환을 해서 서버가 볼 수 없는 통로로 공유 키를 넘깁니다. 앞의 두 자리만 서버가 코드를 찾는 데 쓰고, 나머지 여덟 자리는 서버로 보내지 않습니다. 새 기기가 코드를 맞게 입력했는지 연결된 기기가 확인한 다음에야 서버가 새 기기를 등록하며, 틀린 코드가 한 번이라도 들어오면 그 코드는 취소됩니다.
+3. **해제**: 연결된 기기 목록에서 다른 기기를 해제하거나, **이 기기 연결 해제**로 자신을 해제합니다. 해제된 기기의 토큰은 바로 무효가 되고, 그 기기 앞으로 남은 항목도 지워집니다. 마지막 기기까지 해제하면 서버가 다시 첫 연결 코드를 출력합니다.
+
+### 초기화
+
+모든 기기를 잃어버렸다면 서버의 기기 목록과 우편함을 지우고 다시 시작합니다. 남은 항목은 어차피 잃어버린 공유 키 없이는 열 수 없습니다. **`acme/` 폴더는 지우지 마세요.** 인증서를 짧은 시간에 여러 번 다시 받으면 Let's Encrypt 발급 제한에 걸립니다.
 
 ```bash
-pinchy-relay add-device "회사 맥"
-pinchy-relay list-devices
-pinchy-relay remove-device "회사 맥"
+launchctl bootout gui/$(id -u)/com.chanyounghur.pinchy-relay
+cd ~/Library/Application\ Support/pinchy-relay && rm -rf relay.db relay.db-wal relay.db-shm blobs
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.chanyounghur.pinchy-relay.plist
+grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log | tail -1
 ```
-
-토큰은 만들 때 한 번만 보여 주고, 서버에는 해시만 저장합니다. 토큰을 잃어버렸거나 기기를 더 쓰지 않으면 `remove-device`로 지우고 다시 만드세요. 지운 기기 앞으로 남은 항목도 함께 지워집니다.
-
-각 기기의 Pinchy 설정 → **기기 간 공유**에 서버 주소, 그 기기의 토큰, 공유 키를 입력합니다. 공유 키는 첫 기기에서 **새 키 만들기**로 만들고, 나머지 기기에는 같은 키를 입력합니다. 키가 다른 기기가 보낸 항목은 열 수 없어 서버에 남아 있다가, 키를 맞추면 받습니다.
 
 ## API
 
-`/health`를 제외한 모든 요청에 `Authorization: Bearer <기기 토큰>`이 필요합니다. 같은 주소에서 토큰 인증이 10분 안에 20번 실패하면 10분 동안 그 주소의 요청을 거부합니다.
+`Authorization: Bearer <기기 토큰>`이 필요한 요청과 연결 전에 쓰는 요청이 있습니다. 같은 주소에서 토큰 인증, 첫 연결 코드, 없는 페어링 코드가 합쳐서 10분 안에 20번 실패하면 10분 동안 그 주소의 요청을 거부합니다.
 
-| 요청 | 설명 |
-| --- | --- |
-| `GET /v1/me` | 이 기기 이름과 다른 기기 목록 |
-| `POST /v1/items` | `{"id", "envelope", "has_blob"}`. 다른 모든 기기에 전달. `id`는 보내는 기기가 정한 32자 소문자 16진수 |
-| `PUT /v1/items/{id}/blob` | 이미지 본문 업로드. 업로드가 끝나야 받는 기기에 보입니다 |
-| `GET /v1/inbox?wait=25` | 받을 항목 목록. 비어 있으면 최대 `wait`초(최대 30) 기다렸다가 응답 |
-| `GET /v1/items/{id}/blob` | 이미지 본문 다운로드 |
-| `POST /v1/items/{id}/ack` | 받았음을 알림. 모든 기기가 받으면 서버에서 삭제 |
+| 요청 | 인증 | 설명 |
+| --- | --- | --- |
+| `GET /health` | 없음 | 서버 상태 |
+| `POST /v1/first` | 없음 | `{"code", "label"}`. 첫 연결 코드로 첫 기기를 등록하고 토큰을 받음 |
+| `POST /v1/pairings` | 토큰 | `{"msg"}`. SPAKE2 첫 메시지로 페어링을 열고 두 자리 번호를 받음 |
+| `GET /v1/pairings/{번호}` | 토큰 | 새 기기의 응답(`msg`, `confirm`, `name`) 확인 |
+| `POST /v1/pairings/{번호}/approve` | 토큰 | `{"payload", "label"}`. 새 기기를 등록하고 봉인한 공유 키를 전달 |
+| `DELETE /v1/pairings/{번호}` | 토큰 | 페어링 취소 |
+| `POST /v1/pairings/{번호}/join` | 없음 | 새 기기가 페어링에 참여. 한 번만 가능 |
+| `POST /v1/pairings/{번호}/answer` | 없음 | 새 기기의 SPAKE2 응답과 확인값 |
+| `GET /v1/pairings/{번호}/result?ticket=` | 없음 | 승인되면 토큰과 봉인한 공유 키를 받음 |
+| `GET /v1/me`, `PUT /v1/me` | 토큰 | 연결된 기기 수 확인, 이 기기의 봉인한 이름(`label`) 변경 |
+| `GET /v1/devices`, `DELETE /v1/devices/{id}` | 토큰 | 기기 목록, 기기 해제 |
+| `POST /v1/items` | 토큰 | `{"id", "envelope", "has_blob"}`. 다른 모든 기기에 전달. `id`는 보내는 기기가 정한 32자 소문자 16진수 |
+| `PUT /v1/items/{id}/blob` | 토큰 | 이미지 본문 업로드. 업로드가 끝나야 받는 기기에 보입니다 |
+| `GET /v1/inbox?wait=25` | 토큰 | 받을 항목 목록. 비어 있으면 최대 `wait`초(최대 30) 기다렸다가 응답 |
+| `GET /v1/items/{id}/blob` | 토큰 | 이미지 본문 다운로드 |
+| `POST /v1/items/{id}/ack` | 토큰 | 받았음을 알림. 모든 기기가 받으면 서버에서 삭제 |
 
 ## macOS 상시 실행
 
@@ -71,7 +94,7 @@ pinchy-relay remove-device "회사 맥"
 ./install-macos.sh <도메인> [이메일]
 ```
 
-빌드한 실행 파일을 `~/.local/bin/pinchy-relay`에 설치하고, 로그인 시 시작되고 종료되면 다시 실행되는 LaunchAgent(`com.chanyounghur.pinchy-relay`)로 등록합니다. 기본으로 `0.0.0.0:8443`에서 받으며 `PINCHY_RELAY_LISTEN`으로 바꿀 수 있습니다. 해당 포트를 다른 프로그램이 쓰고 있으면 설치를 중단합니다.
+빌드한 실행 파일을 `~/.local/bin/pinchy-relay`에 설치하고, 로그인 시 시작되고 종료되면 다시 실행되는 LaunchAgent(`com.chanyounghur.pinchy-relay`)로 등록합니다. 기본으로 `0.0.0.0:8443`에서 받으며 `PINCHY_RELAY_LISTEN`으로 바꿀 수 있습니다. 해당 포트를 다른 프로그램이 쓰고 있으면 설치를 중단합니다. 연결된 기기가 없으면 설치가 끝날 때 첫 연결 코드를 보여 줍니다.
 
 - 데이터: `~/Library/Application Support/pinchy-relay/` (`relay.db`, `blobs/`)
 - 인증서: `~/Library/Application Support/pinchy-relay/acme/`

@@ -10,7 +10,6 @@ use clipboard_rs::{
 use clipboard_rs::common::RustImage;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -29,31 +28,12 @@ struct Source {
     look: AppLook,
 }
 
-/// Hash of text that Pinchy itself puts on the clipboard and must not record,
-/// such as the sharing key.
-static IGNORED: Mutex<Option<String>> = Mutex::new(None);
-
-/// Copies `text` without adding it to the history.
-pub fn copy_unrecorded(text: &str) -> Result<(), String> {
-    *IGNORED.lock().unwrap() = Some(sha256(text.as_bytes()));
-    ClipboardContext::new()
-        .and_then(|ctx| ctx.set_text(text.to_string()))
-        .map_err(|e| e.to_string())
-}
-
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) {
         let app = self.app.clone();
         let db = app.state::<Db>();
         let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
-            {
-                let mut ignored = IGNORED.lock().unwrap();
-                if ignored.as_deref() == Some(item.hash.as_str()) {
-                    *ignored = None;
-                    return;
-                }
-            }
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());

@@ -1,13 +1,15 @@
 //! Pinchy relay: a mailbox server that Pinchy clients reach over HTTPS.
 //!
-//! Devices are registered with `pinchy-relay add-device <name>`. An item sent
-//! by one device is queued for every other device until each has
+//! The first device joins with a code the relay prints while it has no
+//! devices; later devices are invited by connected ones (see `pairing`). An
+//! item sent by one device is queued for every other device until each has
 //! acknowledged it or it expires. Contents are encrypted by the clients.
 
 mod api;
+mod pairing;
 mod store;
 
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use rustls_acme::{caches::DirCache, AcmeConfig};
 use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio_stream::StreamExt;
@@ -19,11 +21,8 @@ const STALE_UPLOAD_MS: i64 = 3_600_000;
 #[derive(Parser, Debug)]
 #[command(version, about = "Pinchy relay server")]
 struct Args {
-    #[command(subcommand)]
-    command: Option<Command>,
-
     /// Where the database, blobs and certificates are kept.
-    #[arg(long, env = "PINCHY_RELAY_DATA_DIR", default_value_os_t = default_data_dir(), global = true)]
+    #[arg(long, env = "PINCHY_RELAY_DATA_DIR", default_value_os_t = default_data_dir())]
     data_dir: PathBuf,
 
     /// Address to listen on.
@@ -60,16 +59,6 @@ struct Args {
     max_blob_mb: u64,
 }
 
-#[derive(Subcommand, Debug)]
-enum Command {
-    /// Register a device and print its token.
-    AddDevice { name: String },
-    /// List registered devices.
-    ListDevices,
-    /// Remove a device. Its token stops working and its pending mail is dropped.
-    RemoveDevice { name: String },
-}
-
 fn default_data_dir() -> PathBuf {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     if cfg!(target_os = "macos") {
@@ -86,73 +75,25 @@ fn open_store(data_dir: &PathBuf) -> store::Store {
     })
 }
 
-fn format_time(ms: Option<i64>) -> String {
-    match ms {
-        Some(ms) => {
-            let ago = (store::now_ms() - ms) / 1000;
-            match ago {
-                ..60 => "just now".into(),
-                60..3600 => format!("{}m ago", ago / 60),
-                3600..86_400 => format!("{}h ago", ago / 3600),
-                _ => format!("{}d ago", ago / 86_400),
-            }
-        }
-        None => "never".into(),
-    }
-}
-
-fn run_command(command: Command, data_dir: &PathBuf) {
-    let store = open_store(data_dir);
-    let result = match command {
-        Command::AddDevice { name } => store.add_device(&name).map(|(device, token)| {
-            println!("Added \"{}\". Enter this token in Pinchy's settings on that device:", device.name);
-            println!();
-            println!("  {token}");
-            println!();
-            println!("It is shown only once.");
-        }),
-        Command::ListDevices => store.list_devices().map(|devices| {
-            if devices.is_empty() {
-                println!("No devices. Add one with `pinchy-relay add-device <name>`.");
-            }
-            for d in devices {
-                println!("{}\tlast seen {}", d.name, format_time(d.last_seen));
-            }
-        }),
-        Command::RemoveDevice { name } => store.remove_device(&name).and_then(|removed| {
-            if removed {
-                println!("Removed \"{name}\".");
-                Ok(())
-            } else {
-                Err(format!("no device named \"{name}\""))
-            }
-        }),
-    };
-    if let Err(e) = result {
-        eprintln!("error: {e}");
-        std::process::exit(1);
-    }
-}
-
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    if let Some(command) = args.command {
-        run_command(command, &args.data_dir);
-        return;
-    }
 
     let state = api::AppState::new(
         open_store(&args.data_dir),
         api::Limits { max_envelope_bytes: 8 * 1024 * 1024, max_blob_bytes: args.max_blob_mb * 1024 * 1024 },
     );
     let retention_ms = i64::from(args.retention_days) * DAY_MS;
-    let purging = state.clone();
+    let maintaining = state.clone();
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(Duration::from_secs(600));
-        loop {
+        let mut tick = tokio::time::interval(Duration::from_secs(60));
+        for minute in 0u64.. {
             tick.tick().await;
-            match purging.store.purge(store::now_ms(), retention_ms, STALE_UPLOAD_MS) {
+            maintaining.announce_first_code();
+            if minute % 10 != 0 {
+                continue;
+            }
+            match maintaining.store.purge(store::now_ms(), retention_ms, STALE_UPLOAD_MS) {
                 Ok(0) => {}
                 Ok(n) => eprintln!("[pinchy-relay] removed {n} expired item(s)"),
                 Err(e) => eprintln!("[pinchy-relay] purge failed: {e}"),

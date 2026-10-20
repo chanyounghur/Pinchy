@@ -10,7 +10,15 @@ const handlers = new Map<string, Set<Handler>>();
 let mockAutostart = false;
 let mockRetention = { days_enabled: true, days: 30, size_enabled: true, max_mb: 1024 };
 let mockUsage = { bytes: 249561088, count: 1240 };
-let mockShare: { name: string; server: string; token: string; key: string } | null = null;
+// `?demo=share` starts the browser preview already connected.
+let mockShare: { name: string; server: string; device_id: string } | null =
+  !isTauri && new URLSearchParams(window.location.search).get("demo") === "share"
+    ? { name: "Chanyoung’s MacBook Air", server: "https://example.iptime.org", device_id: "a1" }
+    : null;
+let mockDevices = [
+  { id: "a1", name: "Chanyoung’s MacBook Air", created_at: Date.now() - 86_400_000, last_seen: Date.now(), me: true },
+  { id: "b2", name: "회사 맥", created_at: Date.now() - 3_600_000, last_seen: Date.now() - 600_000, me: false },
+];
 
 const MOCK_ITEMS = [
   { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "Claude", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000 },
@@ -34,12 +42,15 @@ export const invoke: typeof core.invoke = isTauri
   : (async (cmd: string, args?: Record<string, unknown>) => {
       console.log("[mock invoke]", cmd, args);
       if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V", retention: mockRetention, share: mockShare };
-      if (cmd === "share_status") return mockShare ? { state: "connected", name: "집 맥", peers: ["회사 맥"] } : { state: "off" };
+      if (cmd === "share_status") return mockShare ? { state: "connected", devices: mockDevices.length } : { state: "off" };
       if (cmd === "default_device_name") return "Chanyoung’s MacBook Air";
-      if (cmd === "set_share_name") { if (mockShare) mockShare = { ...mockShare, name: String(args?.name ?? "").trim() }; return mockShare?.name; }
-      if (cmd === "generate_share_key") return "mock-key-mock-key-mock-key-mock-key-mock-key";
-      if (cmd === "connect_share") { mockShare = args?.config as typeof mockShare; return { state: "connected", name: "집 맥", peers: ["회사 맥"] }; }
-      if (cmd === "disconnect_share") { mockShare = null; return; }
+      if (cmd === "join_share") { mockShare = { name: String(args?.name ?? ""), server: String(args?.server ?? ""), device_id: "a1" }; return { state: "connected", devices: mockDevices.length }; }
+      if (cmd === "start_invite") { setTimeout(() => handlers.get("share-invite")?.forEach((h) => h({ payload: { state: "joined", name: "새 노트북" } })), 8000); return "37-4821-1937"; }
+      if (cmd === "cancel_invite") return;
+      if (cmd === "share_devices") return mockDevices;
+      if (cmd === "remove_share_device") { mockDevices = mockDevices.filter((d) => d.id !== args?.id); return; }
+      if (cmd === "disconnect_share") { mockShare = null; return null; }
+      if (cmd === "set_share_name") { const name = String(args?.name ?? "").trim(); if (mockShare) mockShare = { ...mockShare, name }; mockDevices = mockDevices.map((d) => d.me ? { ...d, name } : d); return name; }
       if (cmd === "send_item") return 1;
       if (cmd === "storage_usage") return mockUsage;
       if (cmd === "set_retention") { mockRetention = args?.retention as typeof mockRetention; return { removed: 0, usage: mockUsage }; }

@@ -18,15 +18,14 @@ pub struct Settings {
     pub share: Option<ShareConfig>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// The device token and sharing key live in the OS keychain, not here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
 pub struct ShareConfig {
     /// Shown on the other devices next to what this device sends.
-    #[serde(default)]
     pub name: String,
     pub server: String,
-    pub token: String,
-    /// Base64url key that all of the user's devices share.
-    pub key: String,
+    pub device_id: String,
 }
 
 #[cfg(test)]

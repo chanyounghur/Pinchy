@@ -78,6 +78,23 @@ $CONTACT_ENV
 </plist>
 EOF
 
+LOG="$DATA/relay.log"
+LOG_START=$(wc -c < "$LOG" 2>/dev/null || echo 0)
 launchctl bootstrap "$DOMAIN_TARGET" "$PLIST"
 echo "pinchy-relay is serving https://$DOMAIN on $LISTEN"
-echo "log: $DATA/relay.log"
+echo "log: $LOG"
+
+# While no device is connected, the relay prints a first-device code.
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  sleep 1
+  CODE=$(tail -c +$((LOG_START + 1)) "$LOG" 2>/dev/null | grep -o 'first device code: [0-9-]*' | tail -1 | cut -d' ' -f4)
+  if [ -n "$CODE" ]; then
+    echo
+    echo "First device code: $CODE"
+    echo "Enter it in Pinchy (Settings > 기기 간 공유) on your first device within 30 minutes."
+    echo "If it expires, the relay prints a new one to the log."
+    exit 0
+  fi
+done
+echo "No first device code was printed, so a device is probably already connected."
+echo "Add more devices from a connected device's settings (기기 추가)."

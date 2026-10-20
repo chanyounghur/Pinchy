@@ -15,14 +15,22 @@ pub struct Store {
 #[derive(Debug, Clone, Serialize)]
 pub struct Device {
     pub id: String,
-    pub name: String,
+    /// The device's name, sealed by the clients; opaque to the relay.
+    #[serde(serialize_with = "as_base64")]
+    pub label: Vec<u8>,
     pub created_at: i64,
     pub last_seen: Option<i64>,
+}
+
+fn as_base64<S: serde::Serializer>(bytes: &[u8], s: S) -> Result<S::Ok, S::Error> {
+    use base64::Engine;
+    s.serialize_str(&base64::engine::general_purpose::STANDARD.encode(bytes))
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct InboxItem {
     pub id: String,
+    /// Id of the sending device.
     pub from: String,
     pub created_at: i64,
     /// Base64 of the encrypted envelope.
@@ -50,7 +58,7 @@ pub fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-fn random_hex(bytes: usize) -> String {
+pub fn random_hex(bytes: usize) -> String {
     let mut buf = vec![0u8; bytes];
     getrandom::fill(&mut buf).expect("system randomness");
     buf.iter().map(|b| format!("{b:02x}")).collect()
@@ -76,7 +84,7 @@ impl Store {
              PRAGMA foreign_keys=ON;
              CREATE TABLE IF NOT EXISTS devices (
                id TEXT PRIMARY KEY,
-               name TEXT NOT NULL UNIQUE,
+               label BLOB NOT NULL,
                token_hash TEXT NOT NULL UNIQUE,
                created_at INTEGER NOT NULL,
                last_seen INTEGER
@@ -84,7 +92,6 @@ impl Store {
              CREATE TABLE IF NOT EXISTS items (
                id TEXT PRIMARY KEY,
                sender_id TEXT NOT NULL,
-               sender_name TEXT NOT NULL,
                created_at INTEGER NOT NULL,
                envelope BLOB NOT NULL,
                has_blob INTEGER NOT NULL,
@@ -102,73 +109,66 @@ impl Store {
         Ok(Store { conn: Mutex::new(conn), blobs })
     }
 
-    /// Returns the new device and its token. Only the token's hash is kept.
-    pub fn add_device(&self, name: &str) -> Result<(Device, String), String> {
-        let name = name.trim();
-        if name.is_empty() || name.chars().count() > 64 {
-            return Err("device name must be 1-64 characters".into());
-        }
+    /// Registers a device and returns it with its token. Only the token's
+    /// hash is kept.
+    pub fn add_device(&self, label: &[u8]) -> Result<(Device, String), String> {
         let token = format!("pr1_{}", random_hex(32));
-        let device = Device { id: random_hex(8), name: name.into(), created_at: now_ms(), last_seen: None };
+        let device = Device { id: random_hex(8), label: label.to_vec(), created_at: now_ms(), last_seen: None };
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO devices (id, name, token_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
-            params![device.id, device.name, token_hash(&token), device.created_at],
+            "INSERT INTO devices (id, label, token_hash, created_at) VALUES (?1, ?2, ?3, ?4)",
+            params![device.id, device.label, token_hash(&token), device.created_at],
         )
-        .map_err(|e| match e {
-            rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::ConstraintViolation => {
-                format!("a device named \"{name}\" already exists")
-            }
-            e => e.to_string(),
-        })?;
+        .map_err(|e| e.to_string())?;
         Ok((device, token))
+    }
+
+    pub fn device_count(&self) -> Result<i64, String> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row("SELECT COUNT(*) FROM devices", [], |r| r.get(0)).map_err(|e| e.to_string())
     }
 
     pub fn list_devices(&self) -> Result<Vec<Device>, String> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
-            .prepare("SELECT id, name, created_at, last_seen FROM devices ORDER BY created_at")
+            .prepare("SELECT id, label, created_at, last_seen FROM devices ORDER BY created_at")
             .map_err(|e| e.to_string())?;
         let rows = stmt
             .query_map([], |r| {
-                Ok(Device { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)?, last_seen: r.get(3)? })
+                Ok(Device { id: r.get(0)?, label: r.get(1)?, created_at: r.get(2)?, last_seen: r.get(3)? })
             })
             .map_err(|e| e.to_string())?;
         rows.collect::<Result<_, _>>().map_err(|e| e.to_string())
     }
 
-    /// Removes a device and its undelivered mail. Items it sent stay for the others.
-    pub fn remove_device(&self, name: &str) -> Result<bool, String> {
+    pub fn set_label(&self, device: &Device, label: &[u8]) -> Result<(), String> {
         let conn = self.conn.lock().unwrap();
-        let Some(id): Option<String> = conn
-            .query_row("SELECT id FROM devices WHERE name = ?1", params![name.trim()], |r| r.get(0))
-            .optional()
-            .map_err(|e| e.to_string())?
-        else {
-            return Ok(false);
-        };
+        conn.execute("UPDATE devices SET label = ?1 WHERE id = ?2", params![label, device.id])
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// Removes a device and its undelivered mail. Items it sent stay for the others.
+    pub fn remove_device(&self, id: &str) -> Result<bool, String> {
+        let conn = self.conn.lock().unwrap();
         conn.execute("DELETE FROM deliveries WHERE device_id = ?1", params![id]).map_err(|e| e.to_string())?;
-        conn.execute("DELETE FROM devices WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
+        let removed = conn.execute("DELETE FROM devices WHERE id = ?1", params![id]).map_err(|e| e.to_string())?;
         self.delete_orphans(&conn).map_err(|e| e.to_string())?;
-        Ok(true)
+        Ok(removed > 0)
     }
 
     pub fn authenticate(&self, token: &str) -> Option<Device> {
         let conn = self.conn.lock().unwrap();
         let device = conn
             .query_row(
-                "SELECT id, name, created_at, last_seen FROM devices WHERE token_hash = ?1",
+                "SELECT id, label, created_at, last_seen FROM devices WHERE token_hash = ?1",
                 params![token_hash(token)],
-                |r| Ok(Device { id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)?, last_seen: r.get(3)? }),
+                |r| Ok(Device { id: r.get(0)?, label: r.get(1)?, created_at: r.get(2)?, last_seen: r.get(3)? }),
             )
             .optional()
             .ok()??;
         let _ = conn.execute("UPDATE devices SET last_seen = ?1 WHERE id = ?2", params![now_ms(), device.id]);
         Some(device)
-    }
-
-    pub fn peers(&self, device: &Device) -> Result<Vec<String>, String> {
-        Ok(self.list_devices()?.into_iter().filter(|d| d.id != device.id).map(|d| d.name).collect())
     }
 
     /// Queues an item for every other device. Items with a blob stay hidden
@@ -177,9 +177,9 @@ impl Store {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         let inserted = tx.execute(
-            "INSERT OR IGNORE INTO items (id, sender_id, sender_name, created_at, envelope, has_blob, ready)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, sender.id, sender.name, now_ms(), envelope, has_blob, !has_blob],
+            "INSERT OR IGNORE INTO items (id, sender_id, created_at, envelope, has_blob, ready)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![id, sender.id, now_ms(), envelope, has_blob, !has_blob],
         )?;
         if inserted == 0 {
             return Err(CreateError::Duplicate);
@@ -220,7 +220,7 @@ impl Store {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn
             .prepare(
-                "SELECT i.id, i.sender_name, i.created_at, i.envelope, i.blob_size
+                "SELECT i.id, i.sender_id, i.created_at, i.envelope, i.blob_size
                  FROM deliveries d JOIN items i ON i.id = d.item_id
                  WHERE d.device_id = ?1 AND i.ready = 1
                  ORDER BY i.created_at LIMIT ?2",
@@ -324,25 +324,28 @@ mod tests {
     }
 
     #[test]
-    fn tokens_authenticate_and_names_are_unique() {
+    fn tokens_authenticate_and_labels_stay_opaque() {
         let (_dir, store) = store();
-        let (device, token) = store.add_device("회사 맥").unwrap();
+        assert_eq!(store.device_count().unwrap(), 0);
+        let (device, token) = store.add_device(b"sealed name").unwrap();
         assert_eq!(store.authenticate(&token).unwrap().id, device.id);
         assert!(store.authenticate("pr1_wrong").is_none());
-        assert!(store.add_device("회사 맥").unwrap_err().contains("already exists"));
-        assert!(store.add_device("  ").is_err());
+        store.set_label(&device, b"renamed").unwrap();
+        assert_eq!(store.list_devices().unwrap()[0].label, b"renamed");
+        assert!(store.list_devices().unwrap()[0].last_seen.is_some());
+        assert_eq!(store.device_count().unwrap(), 1);
     }
 
     #[test]
     fn item_reaches_every_other_device_and_is_deleted_after_all_acks() {
         let (_dir, store) = store();
-        let (a, _) = store.add_device("a").unwrap();
-        let (b, _) = store.add_device("b").unwrap();
-        let (c, _) = store.add_device("c").unwrap();
+        let (a, _) = store.add_device(b"a").unwrap();
+        let (b, _) = store.add_device(b"b").unwrap();
+        let (c, _) = store.add_device(b"c").unwrap();
         assert_eq!(store.create_item(&a, &id(1), b"sealed", false).unwrap(), 2);
         assert!(store.inbox(&a, 10).unwrap().is_empty());
         let inbox = store.inbox(&b, 10).unwrap();
-        assert_eq!((inbox.len(), inbox[0].from.as_str()), (1, "a"));
+        assert_eq!((inbox.len(), inbox[0].from.as_str()), (1, a.id.as_str()));
         assert!(store.ack(&b, &id(1)).unwrap());
         assert!(store.inbox(&b, 10).unwrap().is_empty());
         assert_eq!(store.inbox(&c, 10).unwrap().len(), 1);
@@ -354,8 +357,8 @@ mod tests {
     #[test]
     fn blob_items_stay_hidden_until_uploaded_by_their_sender() {
         let (_dir, store) = store();
-        let (a, _) = store.add_device("a").unwrap();
-        let (b, _) = store.add_device("b").unwrap();
+        let (a, _) = store.add_device(b"a").unwrap();
+        let (b, _) = store.add_device(b"b").unwrap();
         store.create_item(&a, &id(2), b"sealed", true).unwrap();
         assert!(store.inbox(&b, 10).unwrap().is_empty());
         assert!(store.pending_blob(&b, &id(2)).is_none(), "only the sender uploads");
@@ -374,9 +377,9 @@ mod tests {
     #[test]
     fn duplicates_lonely_senders_and_expiry() {
         let (_dir, store) = store();
-        let (a, _) = store.add_device("a").unwrap();
+        let (a, _) = store.add_device(b"a").unwrap();
         assert_eq!(store.create_item(&a, &id(3), b"x", false), Err(CreateError::NoRecipients));
-        let (b, _) = store.add_device("b").unwrap();
+        let (b, _) = store.add_device(b"b").unwrap();
         store.create_item(&a, &id(3), b"x", false).unwrap();
         assert_eq!(store.create_item(&b, &id(3), b"y", false), Err(CreateError::Duplicate));
         store.create_item(&a, &id(4), b"x", true).unwrap();
@@ -390,13 +393,14 @@ mod tests {
     #[test]
     fn removing_a_device_drops_its_mail_and_access() {
         let (_dir, store) = store();
-        let (a, _) = store.add_device("a").unwrap();
-        let (_b, token) = store.add_device("b").unwrap();
+        let (a, _) = store.add_device(b"a").unwrap();
+        let (b, token) = store.add_device(b"b").unwrap();
         store.create_item(&a, &id(5), b"x", false).unwrap();
-        assert!(store.remove_device("b").unwrap());
-        assert!(!store.remove_device("b").unwrap());
+        assert!(store.remove_device(&b.id).unwrap());
+        assert!(!store.remove_device(&b.id).unwrap());
         assert!(store.authenticate(&token).is_none());
-        assert!(store.purge(now_ms() + 8 * 86_400_000, 7 * 86_400_000, 3_600_000).unwrap() == 0, "orphan was already deleted");
+        assert_eq!(store.purge(now_ms() + 8 * 86_400_000, 7 * 86_400_000, 3_600_000).unwrap(), 0, "orphan was already deleted");
+        assert_eq!(store.device_count().unwrap(), 1);
     }
 
     #[test]

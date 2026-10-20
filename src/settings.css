@@ -149,5 +149,15 @@ button.danger { color: #c64735; }
 .share-summary div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .share-summary span { opacity: 0.6; flex-shrink: 0; }
 .share-summary strong { font-weight: 600; overflow-wrap: anywhere; text-align: right; }
+.share-devices { list-style: none; margin: 12px 0 0; padding: 0; border: 1px solid rgba(128, 128, 128, 0.25); border-radius: 10px; }
+.share-devices li { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; }
+.share-devices li + li { border-top: 1px solid rgba(128, 128, 128, 0.2); }
+.share-devices li > div { display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.share-devices strong { font-weight: 600; overflow-wrap: anywhere; }
+.share-devices small { width: 100%; font-size: 11px; opacity: 0.6; }
+.share-me { font-size: 10px; padding: 1px 6px; border-radius: 6px; background: rgba(198, 71, 53, 0.15); color: #c64735; }
+.share-invite { margin-top: 14px; padding: 14px; border-radius: 10px; background: rgba(128, 128, 128, 0.08); }
+.share-invite p { margin: 0 0 8px; font-size: 12px; line-height: 1.5; }
+.share-code { margin: 6px 0 4px; font-size: 28px; font-weight: 700; letter-spacing: 2px; font-variant-numeric: tabular-nums; text-align: center; user-select: text; }
 .share code { font-size: 11px; padding: 1px 4px; border-radius: 4px; background: rgba(128, 128, 128, 0.15); user-select: text; }
 @media (prefers-color-scheme: dark) { .share-state.connected { color: #5fd37f; } .share-state.error { color: #ff9585; } }
