@@ -9,6 +9,7 @@
 
 use crate::platform::{self, Rect};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager, WebviewWindow};
 
 pub const WINDOW: &str = "main";
@@ -24,6 +25,8 @@ pub struct PanelState {
     /// The app that was in front right before the panel opened.
     pub target: Mutex<Option<i64>>,
     pub open: Mutex<bool>,
+    /// When the panel last started closing.
+    closed_at: Mutex<Option<Instant>>,
 }
 
 fn window(app: &AppHandle) -> Option<WebviewWindow> {
@@ -77,6 +80,7 @@ pub fn hide(app: &AppHandle) {
         if !was_open {
             return;
         }
+        *state.closed_at.lock().unwrap() = Some(Instant::now());
         let restore_focus = platform::is_self_active();
         if let Some(h) = window(&app).and_then(|w| platform::handle(&w)) {
             if let Some(current) = platform::window_frame(h) {
@@ -97,7 +101,7 @@ pub fn hide(app: &AppHandle) {
         // Order the window out once the animation has finished (unless reopened).
         let app2 = app.clone();
         std::thread::spawn(move || {
-            std::thread::sleep(std::time::Duration::from_secs_f64(SLIDE_SECONDS + 0.05));
+            std::thread::sleep(Duration::from_secs_f64(SLIDE_SECONDS + 0.05));
             let _ = app2.clone().run_on_main_thread(move || {
                 let still_closed = !*app2.state::<PanelState>().open.lock().unwrap();
                 if still_closed {
@@ -121,5 +125,19 @@ pub fn toggle(app: &AppHandle) {
         hide(app);
     } else {
         show(app);
+    }
+}
+
+/// Pressing the tray icon can take focus first, so the panel may already be
+/// closing because of this very click. Treat that as the click closing it.
+pub fn toggle_from_tray(app: &AppHandle) {
+    let state = app.state::<PanelState>();
+    let just_closed = state
+        .closed_at
+        .lock()
+        .unwrap()
+        .is_some_and(|at| at.elapsed() < Duration::from_millis(500));
+    if *state.open.lock().unwrap() || !just_closed {
+        toggle(app);
     }
 }

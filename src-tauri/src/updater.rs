@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::{sync::Mutex, time::Duration};
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{menu::MenuItem, AppHandle, Emitter, Manager, State, Wry};
 use tauri_plugin_updater::{Update, UpdaterExt};
 
 #[derive(Clone, Serialize)]
@@ -14,6 +14,8 @@ pub struct Status {
 struct Inner {
     status: Status,
     pending: Option<(Update, Vec<u8>)>,
+    /// The tray menu item that mirrors the current phase.
+    menu_item: Option<MenuItem<Wry>>,
 }
 
 pub struct UpdateState(Mutex<Inner>);
@@ -28,13 +30,53 @@ impl Default for UpdateState {
                 error: None,
             },
             pending: None,
+            menu_item: None,
         }))
     }
 }
 
+fn menu_label(phase: &str) -> &'static str {
+    match phase {
+        "checking" => "업데이트 확인 중…",
+        "downloading" => "업데이트 다운로드 중…",
+        "ready" => "설치하고 재시작",
+        "installing" => "설치 중…",
+        _ => "업데이트 확인",
+    }
+}
+
 fn publish(app: &AppHandle) {
-    let status = app.state::<UpdateState>().0.lock().unwrap().status.clone();
+    let (status, menu_item) = {
+        let state = app.state::<UpdateState>();
+        let inner = state.0.lock().unwrap();
+        (inner.status.clone(), inner.menu_item.clone())
+    };
+    if let Some(item) = menu_item {
+        let _ = item.set_text(menu_label(status.phase));
+        let _ = item.set_enabled(!matches!(
+            status.phase,
+            "checking" | "downloading" | "installing"
+        ));
+    }
     let _ = app.emit("update-status", status);
+}
+
+/// Keeps `item`'s text and enabled state in step with the update phase.
+pub fn attach_menu_item(app: &AppHandle, item: MenuItem<Wry>) {
+    app.state::<UpdateState>().0.lock().unwrap().menu_item = Some(item);
+    publish(app);
+}
+
+/// The tray item installs a downloaded update, or checks for one otherwise.
+pub fn run_menu_item(app: AppHandle) {
+    let ready = app.state::<UpdateState>().0.lock().unwrap().status.phase == "ready";
+    tauri::async_runtime::spawn(async move {
+        let _ = if ready {
+            install_update(app).await
+        } else {
+            check_update(app).await
+        };
+    });
 }
 
 #[tauri::command]
@@ -136,4 +178,17 @@ pub fn start(app: AppHandle) {
             std::thread::sleep(Duration::from_secs(6 * 60 * 60));
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::menu_label;
+
+    #[test]
+    fn menu_label_offers_install_only_when_ready() {
+        assert_eq!(menu_label("ready"), "설치하고 재시작");
+        for phase in ["idle", "latest", "error"] {
+            assert_eq!(menu_label(phase), "업데이트 확인");
+        }
+    }
 }

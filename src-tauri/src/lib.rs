@@ -13,7 +13,7 @@ mod updater;
 use db::{Db, Item};
 use settings::{Settings, SettingsStore};
 use tauri::menu::{MenuBuilder, MenuItemBuilder};
-use tauri::tray::TrayIconBuilder;
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 use tauri_plugin_autostart::ManagerExt as AutostartExt;
@@ -175,18 +175,16 @@ pub fn run() {
             storage::start(app.handle().clone());
             panel::init(app.handle());
 
-            let open = MenuItemBuilder::with_id("open", "열기").build(app)?;
-            let settings_item = MenuItemBuilder::with_id("settings", "설정 패널 열기").build(app)?;
-            let clear = MenuItemBuilder::with_id("clear", "히스토리 비우기").build(app)?;
+            let settings_item = MenuItemBuilder::with_id("settings", "설정").build(app)?;
+            let update_item = MenuItemBuilder::with_id("update", "업데이트 확인").build(app)?;
             let quit = MenuItemBuilder::with_id("quit", "종료").build(app)?;
             let menu = MenuBuilder::new(app)
-                .item(&open)
                 .item(&settings_item)
-                .separator()
-                .item(&clear)
+                .item(&update_item)
                 .separator()
                 .item(&quit)
                 .build()?;
+            updater::attach_menu_item(app.handle(), update_item);
             #[cfg(target_os = "macos")]
             let tray_icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray/32x32.png"))?;
             #[cfg(target_os = "windows")]
@@ -207,18 +205,21 @@ pub fn run() {
                 .icon_as_template(cfg!(target_os = "macos"))
                 .tooltip("Pinchy")
                 .menu(&menu)
-                .show_menu_on_left_click(true)
-                .on_menu_event(|app, e| match e.id().as_ref() {
-                    "open" => panel::show(app),
-                    "settings" => open_settings_window(app),
-                    "clear" => {
-                        let db = app.state::<Db>();
-                        if let Err(error) = storage::clear(&db) {
-                            eprintln!("[pinchy] clear history failed: {error}");
-                            let _ = app.emit("storage-error", error);
-                        }
-                        let _ = app.emit(clipboard::CHANGED_EVENT, ());
+                // Left click opens the panel; the menu appears on right click.
+                .show_menu_on_left_click(false)
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        ..
+                    } = event
+                    {
+                        panel::toggle_from_tray(tray.app_handle());
                     }
+                })
+                .on_menu_event(|app, e| match e.id().as_ref() {
+                    "settings" => open_settings_window(app),
+                    "update" => updater::run_menu_item(app.clone()),
                     "quit" => app.exit(0),
                     _ => {}
                 })
