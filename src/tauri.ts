@@ -11,9 +11,9 @@ let mockAutostart = false;
 let mockRetention = { days_enabled: true, days: 30, size_enabled: true, max_mb: 1024 };
 let mockUsage = { bytes: 249561088, count: 1240 };
 // `?demo=share` starts the browser preview already connected.
-let mockShare: { name: string; server: string; device_id: string } | null =
+let mockShare: { name: string; server: string; device_id: string; auto_send: boolean } | null =
   !isTauri && new URLSearchParams(window.location.search).get("demo") === "share"
-    ? { name: "Chanyoung’s MacBook Air", server: "https://example.iptime.org", device_id: "a1" }
+    ? { name: "Chanyoung’s MacBook Air", server: "https://example.iptime.org", device_id: "a1", auto_send: false }
     : null;
 let mockDevices = [
   { id: "a1", name: "Chanyoung’s MacBook Air", created_at: Date.now() - 86_400_000, last_seen: Date.now(), me: true },
@@ -44,7 +44,8 @@ export const invoke: typeof core.invoke = isTauri
       if (cmd === "get_settings") return { shortcut: /Mac/i.test(navigator.platform) ? "Alt+Super+V" : "Super+Alt+V", retention: mockRetention, share: mockShare };
       if (cmd === "share_status") return mockShare ? { state: "connected", devices: mockDevices.length } : { state: "off" };
       if (cmd === "default_device_name") return "Chanyoung’s MacBook Air";
-      if (cmd === "join_share") { mockShare = { name: String(args?.name ?? ""), server: String(args?.server ?? ""), device_id: "a1" }; return { state: "connected", devices: mockDevices.length }; }
+      if (cmd === "set_share_auto") { if (mockShare) mockShare = { ...mockShare, auto_send: Boolean(args?.enabled) }; return Boolean(args?.enabled); }
+      if (cmd === "join_share") { mockShare = { name: String(args?.name ?? ""), server: String(args?.server ?? ""), device_id: "a1", auto_send: false }; return { state: "connected", devices: mockDevices.length }; }
       if (cmd === "start_invite") { setTimeout(() => handlers.get("share-invite")?.forEach((h) => h({ payload: { state: "joined", name: "새 노트북" } })), 8000); return "37-4821-1937"; }
       if (cmd === "cancel_invite") return;
       if (cmd === "share_devices") return mockDevices;

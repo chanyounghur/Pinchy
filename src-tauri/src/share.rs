@@ -11,6 +11,10 @@
 //! connected device; the two run SPAKE2 over the relay with it, so the
 //! sharing key reaches the new device without the relay being able to read
 //! it. The device token and sharing key are kept in the OS keychain.
+//!
+//! With auto-send on, every new local copy of text, a link or an image is
+//! queued for the other devices. Received items and Pinchy's own clipboard
+//! writes are never sent on, so items do not bounce between devices.
 
 use crate::clipboard::{self, CHANGED_EVENT};
 use crate::db::{Db, Item, NewItem};
@@ -26,6 +30,7 @@ use spake2::{Ed25519Group, Identity, Password, Spake2};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
@@ -46,6 +51,8 @@ const JOINER: &[u8] = b"pinchy-joiner";
 const KEY_MISMATCH: &str =
     "다른 공유 키로 보낸 항목이 있어 열 수 없어요. 서버를 초기화했다면 보낸 기기를 다시 연결해 주세요.";
 const UNKNOWN_DEVICE: &str = "다른 기기";
+const NO_PEERS: &str = "보낼 다른 기기가 없어요. 설정에서 기기를 추가해 주세요.";
+const AUTO_SEND_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -80,6 +87,8 @@ pub struct ShareState {
     changed: Condvar,
     secrets: Mutex<Option<Secrets>>,
     invite: Mutex<Option<Arc<AtomicBool>>>,
+    /// Item ids waiting to be auto-sent, in copy order.
+    outbox: Mutex<Option<Sender<i64>>>,
 }
 
 impl Default for ShareState {
@@ -90,6 +99,7 @@ impl Default for ShareState {
             changed: Condvar::new(),
             secrets: Mutex::new(None),
             invite: Mutex::new(None),
+            outbox: Mutex::new(None),
         }
     }
 }
@@ -346,7 +356,7 @@ impl Http {
         let message = match code {
             401 => "이 기기의 연결이 해제됐어요. 연결을 해제한 뒤 새 코드로 다시 연결해 주세요.".into(),
             413 => "너무 커서 보낼 수 없어요.".into(),
-            422 => "보낼 다른 기기가 없어요. 설정에서 기기를 추가해 주세요.".into(),
+            422 => NO_PEERS.into(),
             429 => "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해 주세요.".into(),
             code => format!("중계 서버 오류예요. (HTTP {code})"),
         };
@@ -795,7 +805,7 @@ pub async fn join_share(app: AppHandle, name: String, server: String, code: Stri
         };
         let state = app.state::<ShareState>();
         save_secrets(&state, &secrets)?;
-        let config = ShareConfig { name, server, device_id };
+        let config = ShareConfig { name, server, device_id, auto_send: false };
         app.state::<SettingsStore>().update(|s| s.share = Some(config.clone()))?;
         let status = match Relay::new(&config, &secrets)?.me() {
             Ok(me) => Status::Connected { devices: me.devices },
@@ -887,6 +897,21 @@ pub async fn disconnect_share(app: AppHandle) -> Result<Option<String>, String> 
     .await
 }
 
+#[tauri::command]
+pub fn set_share_auto(store: tauri::State<SettingsStore>, enabled: bool) -> Result<bool, String> {
+    let mut connected = false;
+    store.update(|s| {
+        if let Some(share) = s.share.as_mut() {
+            share.auto_send = enabled;
+            connected = true;
+        }
+    })?;
+    if !connected {
+        return Err("기기 간 공유를 먼저 연결해 주세요.".into());
+    }
+    Ok(enabled)
+}
+
 /// Renames this device for the device list and for items it sends.
 #[tauri::command]
 pub async fn set_share_name(app: AppHandle, name: String) -> Result<String, String> {
@@ -916,6 +941,51 @@ pub async fn send_item(app: AppHandle, id: i64) -> Result<usize, String> {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-send
+
+/// Whether a stored item is a new local copy worth sending on.
+fn auto_sendable(item: &Item) -> bool {
+    matches!(item.kind.as_str(), "text" | "link" | "image") && item.origin_device.is_none()
+}
+
+/// Called by the clipboard watcher after it stores a new local copy.
+pub fn copied(app: &AppHandle, hash: &str) {
+    let auto = app.state::<SettingsStore>().get().share.is_some_and(|s| s.auto_send && !s.device_id.is_empty());
+    if !auto {
+        return;
+    }
+    let Ok(Some(item)) = app.state::<Db>().get_by_hash(hash) else { return };
+    if !auto_sendable(&item) {
+        return;
+    }
+    if let Some(outbox) = app.state::<ShareState>().outbox.lock().unwrap().as_ref() {
+        let _ = outbox.send(item.id);
+    }
+}
+
+fn send_loop(app: AppHandle, queue: mpsc::Receiver<i64>) {
+    for id in queue {
+        let Ok(Some(item)) = app.state::<Db>().get(id) else { continue };
+        for attempt in 1..=AUTO_SEND_ATTEMPTS {
+            let relay = match session(&app) {
+                Ok(Some(relay)) => relay,
+                _ => break,
+            };
+            match relay.push(&item) {
+                Ok(_) => break,
+                Err(e) if e == NO_PEERS => break,
+                Err(message) if attempt == AUTO_SEND_ATTEMPTS => {
+                    eprintln!("[pinchy] auto-send of item {id} failed: {message}");
+                    let state = app.state::<ShareState>();
+                    state.set(&app, Status::Error { message: format!("자동으로 보내지 못한 항목이 있어요. {message}") });
+                }
+                Err(_) => std::thread::sleep(Duration::from_secs(2 * u64::from(attempt))),
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Receiver
 
 fn store(app: &AppHandle, relay: &Relay, incoming: &Incoming, images_dir: &Path) -> Result<(), ReceiveError> {
@@ -931,6 +1001,13 @@ fn store(app: &AppHandle, relay: &Relay, incoming: &Incoming, images_dir: &Path)
 }
 
 pub fn start(app: AppHandle, images_dir: PathBuf) {
+    let (outbox, queue) = mpsc::channel();
+    *app.state::<ShareState>().outbox.lock().unwrap() = Some(outbox);
+    let sender = app.clone();
+    std::thread::Builder::new()
+        .name("share-sender".into())
+        .spawn(move || send_loop(sender, queue))
+        .expect("spawn share sender");
     std::thread::Builder::new()
         .name("share-receiver".into())
         .spawn(move || receive_loop(app, images_dir))
@@ -1105,6 +1182,20 @@ mod tests {
     }
 
     #[test]
+    fn only_new_local_text_links_and_images_are_auto_sent() {
+        let item = |kind: &str, origin: Option<&str>| Item {
+            id: 1, kind: kind.into(), content: String::new(), preview: String::new(), source_app: None,
+            app_icon: None, app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None,
+            og_image: None, origin_device: origin.map(Into::into),
+        };
+        assert!(auto_sendable(&item("text", None)));
+        assert!(auto_sendable(&item("link", None)));
+        assert!(auto_sendable(&item("image", None)));
+        assert!(!auto_sendable(&item("files", None)), "files are not sent yet");
+        assert!(!auto_sendable(&item("text", Some("회사 맥"))), "received items do not bounce back");
+    }
+
+    #[test]
     fn only_png_blobs_are_accepted() {
         let mut png = Vec::new();
         image::RgbaImage::new(3, 2)
@@ -1121,7 +1212,8 @@ mod tests {
     #[ignore]
     fn relay_round_trip() {
         let server = std::env::var("PINCHY_TEST_RELAY").unwrap();
-        let config = |name: &str, device_id: String| ShareConfig { name: name.into(), server: server.clone(), device_id };
+        let config =
+            |name: &str, device_id: String| ShareConfig { name: name.into(), server: server.clone(), device_id, auto_send: false };
 
         // First device, then an invited one.
         let Code::First(first) = parse_code(&std::env::var("PINCHY_TEST_FIRST_CODE").unwrap()).unwrap() else {

@@ -26,6 +26,8 @@ pub struct ShareConfig {
     pub name: String,
     pub server: String,
     pub device_id: String,
+    /// Send every new local copy to the other devices.
+    pub auto_send: bool,
 }
 
 #[cfg(test)]

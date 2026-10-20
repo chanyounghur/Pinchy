@@ -265,6 +265,7 @@ pub fn run() {
             share::remove_share_device,
             share::disconnect_share,
             share::set_share_name,
+            share::set_share_auto,
             share::send_item,
             updater::update_status,
             updater::check_update,

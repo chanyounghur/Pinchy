@@ -10,7 +10,8 @@ use clipboard_rs::{
 use clipboard_rs::common::RustImage;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const CHANGED_EVENT: &str = "clipboard-changed";
@@ -28,15 +29,32 @@ struct Source {
     look: AppLook,
 }
 
+/// When Pinchy itself last put something on the clipboard, so the change it
+/// causes is not mistaken for a new copy.
+static OWN_WRITE: Mutex<Option<Instant>> = Mutex::new(None);
+const OWN_WRITE_WINDOW: Duration = Duration::from_secs(2);
+
+pub fn mark_own_write() {
+    *OWN_WRITE.lock().unwrap() = Some(Instant::now());
+}
+
+fn written_by_pinchy() -> bool {
+    OWN_WRITE.lock().unwrap().is_some_and(|at| at.elapsed() < OWN_WRITE_WINDOW)
+}
+
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) {
         let app = self.app.clone();
         let db = app.state::<Db>();
         let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
+            let hash = item.hash.clone();
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
+                    if !written_by_pinchy() {
+                        crate::share::copied(&app, &hash);
+                    }
                 }
                 Err(e) => eprintln!("[pinchy] db upsert failed: {e}"),
             }

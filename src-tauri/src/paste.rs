@@ -18,6 +18,7 @@ const KVK_ANSI_V: u16 = 0x09;
 
 pub fn copy_to_clipboard(item: &Item) -> Result<(), String> {
     let ctx = ClipboardContext::new().map_err(|e| e.to_string())?;
+    crate::clipboard::mark_own_write();
     match item.kind.as_str() {
         "image" => {
             let img = RustImageData::from_path(&item.content).map_err(|e| e.to_string())?;

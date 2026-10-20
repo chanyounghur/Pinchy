@@ -160,6 +160,16 @@ impl Db {
         .optional()
     }
 
+    pub fn get_by_hash(&self, hash: &str) -> rusqlite::Result<Option<Item>> {
+        let conn = self.0.lock().unwrap();
+        conn.query_row(
+            &format!("SELECT {COLUMNS} FROM items WHERE hash = ?1"),
+            params![hash],
+            row_to_item,
+        )
+        .optional()
+    }
+
     pub fn delete(&self, id: i64) -> rusqlite::Result<Option<Item>> {
         let _files = self.1.lock().unwrap();
         let item = self.get(id)?;
