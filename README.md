@@ -65,6 +65,10 @@ bun run tauri dev
 
 설치 파일은 `bun run tauri build`로 만들고, 결과물은 `src-tauri/target/release/bundle/`에 생깁니다. Windows는 NSIS EXE, macOS는 앱과 DMG를 생성합니다. 배포용 macOS 빌드는 `--target aarch64-apple-darwin`을 사용합니다. 릴리스 게시 시 파일명을 위 형식으로 정리하고 자동 업데이트 주소에도 반영합니다. 운영체제별로 다른 코드는 `src-tauri/src/platform.rs`에 모아 두었습니다.
 
+### 중계 서버
+
+기기 간 공유에 쓸 중계 서버는 `relay/`에 있습니다. 아직 외부 접속 확인용 `/health`만 제공하며, 실행 방법과 공유기 설정은 [relay/README.md](relay/README.md)를 참고하세요.
+
 ### 앱 업데이트
 
 0.3.0부터 실행 30초 후 및 6시간마다 GitHub Releases에서 새 버전을 확인하고 백그라운드로 다운로드합니다. 트레이의 **설정 패널 열기**를 누르면 설정 창에서 상태를 볼 수 있고, **업데이트 확인**으로 직접 확인할 수도 있습니다. 다운로드 및 서명 검증이 끝나면 **설치하고 재시작**을 눌러 적용하세요. 업데이트 확인 실패 시 앱과 클립보드 기능은 계속 동작합니다.
