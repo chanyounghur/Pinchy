@@ -196,7 +196,7 @@ export default function ShareSettings() {
         <input id="share-auto" className="switch" type="checkbox" role="switch" checked={saved.auto_send}
           disabled={busy} onChange={() => void toggleAuto()} aria-describedby="share-auto-note" />
       </div>
-      <p className="note" id="share-auto-note">이 기기에서 텍스트, 링크, 이미지를 복사하면 바로 연결된 다른 기기로 보냅니다. 비밀번호도 그대로 보내고, 파일은 보내지 않아요. 기기마다 따로 켜고 끕니다.</p>
+      <p className="note" id="share-auto-note">이 기기에서 텍스트, 링크, 이미지, 파일을 복사하면 바로 연결된 다른 기기로 보냅니다. 비밀번호도 그대로 보내요. 파일은 합쳐서 50MB까지만 보내고, 폴더는 보내지 않아요. 기기마다 따로 켜고 끕니다.</p>
       {status?.state === "error" && <p className="update-error" role="alert">{status.message}</p>}
       <ul className="share-devices" aria-label="연결된 기기">
         {(devices ?? []).map((d) => <li key={d.id}>

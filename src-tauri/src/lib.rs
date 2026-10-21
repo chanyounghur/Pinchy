@@ -170,7 +170,7 @@ pub fn run() {
             }
 
             link_preview::start(app.handle().clone(), images_dir.clone());
-            share::start(app.handle().clone(), images_dir.clone());
+            share::start(app.handle().clone(), images_dir.clone(), data_dir.join("files"));
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
             storage::start(app.handle().clone());
             panel::init(app.handle());

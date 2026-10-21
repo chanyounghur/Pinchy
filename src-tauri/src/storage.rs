@@ -15,6 +15,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 const MB: u64 = 1024 * 1024;
 const DAY: i64 = 86_400_000;
+/// Files received from other devices, one folder per item.
+const RECEIVED: &str = "files";
 
 #[derive(Debug, Serialize)]
 pub struct Usage {
@@ -65,6 +67,78 @@ fn cache_files(root: &Path) -> Result<Vec<PathBuf>, String> {
     Ok(paths)
 }
 
+/// Entries of the received-files folder: one folder per received item, plus
+/// anything left over from an interrupted write.
+fn received_entries(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let directory = root.join(RECEIVED);
+    match std::fs::symlink_metadata(&directory) {
+        Ok(meta) if meta.file_type().is_symlink() => {
+            return Err("받은 파일 폴더가 다른 위치로 연결되어 있어 정리할 수 없어요.".into())
+        }
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(e) => return Err(e.to_string()),
+    }
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(directory).map_err(|e| e.to_string())? {
+        paths.push(entry.map_err(|e| e.to_string())?.path());
+    }
+    Ok(paths)
+}
+
+fn entry_bytes(path: &Path) -> Result<u64, String> {
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(e) => return Err(e.to_string()),
+    };
+    if !meta.is_dir() {
+        return file_bytes(path);
+    }
+    let mut bytes = 0;
+    for entry in std::fs::read_dir(path).map_err(|e| e.to_string())? {
+        bytes += file_bytes(&entry.map_err(|e| e.to_string())?.path())?;
+    }
+    Ok(bytes)
+}
+
+fn remove_entry(path: &Path) -> std::io::Result<()> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+        Ok(_) => std::fs::remove_file(path),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+/// Paths listed by a `files` history entry.
+fn listed_files(content: &str) -> Vec<String> {
+    serde_json::from_str(content).unwrap_or_default()
+}
+
+/// The received-files folders that `paths` live in. Paths elsewhere are the
+/// user's own files and are never ours to delete.
+fn received_folders<'a>(root: &Path, paths: impl IntoIterator<Item = &'a str>) -> Result<HashSet<PathBuf>, String> {
+    let directory = match std::fs::canonicalize(root.join(RECEIVED)) {
+        Ok(directory) => directory,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(HashSet::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut folders = HashSet::new();
+    for path in paths {
+        let Some(parent) = Path::new(path).parent() else { continue };
+        match std::fs::canonicalize(parent) {
+            Ok(folder) if folder.parent() == Some(directory.as_path()) => {
+                folders.insert(folder);
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Ok(folders)
+}
+
 fn usage(conn: &Connection) -> Result<Usage, String> {
     let directory = root(conn)?;
     let mut bytes = 0;
@@ -78,6 +152,9 @@ fn usage(conn: &Connection) -> Result<Usage, String> {
     }
     for path in cache_files(&directory)? {
         bytes += file_bytes(&path)?;
+    }
+    for path in received_entries(&directory)? {
+        bytes += entry_bytes(&path)?;
     }
     let count: i64 = conn
         .query_row("SELECT COUNT(*) FROM items", [], |r| r.get(0))
@@ -95,6 +172,8 @@ struct StoredItem {
     image: Option<String>,
     og_image: Option<String>,
     app_icon: Option<String>,
+    /// Paths of a `files` entry; received ones live in our own folder.
+    files: Vec<String>,
 }
 
 fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
@@ -103,7 +182,8 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
         .prepare(
             "SELECT id, created_at, CASE WHEN kind = 'image' THEN content END, og_image, app_icon,
          length(CAST(content AS BLOB)) + length(CAST(preview AS BLOB)) + length(hash)
-         + length(CAST(COALESCE(og_title, '') AS BLOB)) + 128
+         + length(CAST(COALESCE(og_title, '') AS BLOB)) + 128,
+         CASE WHEN kind = 'files' THEN content END
          FROM items ORDER BY created_at ASC, id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -116,6 +196,7 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
                 og_image: row.get(3)?,
                 app_icon: row.get(4)?,
                 record_bytes: row.get::<_, i64>(5)? as u64,
+                files: row.get::<_, Option<String>>(6)?.as_deref().map(listed_files).unwrap_or_default(),
             })
         })
         .map_err(|e| e.to_string())?;
@@ -124,8 +205,37 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
 }
 
 // Never remove the original files referenced by a `files` history entry.
-// Only owned cache files may be deleted, and shared references are respected.
-pub fn remove_item_images(conn: &Connection, item: &Item) {
+// Only owned cache files and received files may be deleted, and shared
+// references are respected.
+pub fn remove_item_files(conn: &Connection, item: &Item) {
+    if item.kind == "files" {
+        remove_received(conn, item);
+    }
+    remove_item_images(conn, item);
+}
+
+fn remove_received(conn: &Connection, item: &Item) {
+    let Ok(directory) = root(conn) else { return };
+    let Ok(folders) = received_folders(&directory, listed_files(&item.content).iter().map(String::as_str)) else {
+        return;
+    };
+    if folders.is_empty() {
+        return;
+    }
+    let Ok(mut statement) = conn.prepare("SELECT content FROM items WHERE kind = 'files'") else { return };
+    let Ok(rows) = statement.query_map([], |row| row.get::<_, String>(0)) else { return };
+    let mut listed = Vec::new();
+    for content in rows {
+        let Ok(content) = content else { return };
+        listed.extend(listed_files(&content));
+    }
+    let Ok(referenced) = received_folders(&directory, listed.iter().map(String::as_str)) else { return };
+    for folder in folders.difference(&referenced) {
+        let _ = std::fs::remove_dir_all(folder);
+    }
+}
+
+fn remove_item_images(conn: &Connection, item: &Item) {
     let Ok(directory) = root(conn) else { return };
     let image_directory = directory.join("images");
     if std::fs::symlink_metadata(&image_directory).is_ok_and(|m| m.file_type().is_symlink()) {
@@ -190,11 +300,23 @@ fn clean_unused(conn: &Connection, remaining: &[StoredItem]) -> Result<(), Strin
             }
         }
     }
-    for path in cache_files(&root(conn)?)? {
+    let directory = root(conn)?;
+    for path in cache_files(&directory)? {
         let canonical = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
         if !referenced.contains(&canonical) {
             std::fs::remove_file(path)
                 .map_err(|e| format!("저장 파일을 정리하지 못했어요: {e}"))?;
+        }
+    }
+    let folders = received_folders(
+        &directory,
+        remaining.iter().flat_map(|item| item.files.iter().map(String::as_str)),
+    )?;
+    for path in received_entries(&directory)? {
+        let keep = std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_dir())
+            && folders.contains(&std::fs::canonicalize(&path).map_err(|e| e.to_string())?);
+        if !keep {
+            remove_entry(&path).map_err(|e| format!("받은 파일을 정리하지 못했어요: {e}"))?;
         }
     }
     Ok(())
@@ -240,6 +362,7 @@ fn enforce(conn: &mut Connection, policy: &Retention, now: i64) -> Result<Cleanu
         compact(conn)?;
     }
     let limit = u64::from(policy.max_mb) * MB;
+    let received = root(conn)?.join(RECEIVED);
     let mut current = usage(conn)?;
     if policy.size_enabled && current.bytes > limit {
         // First reclaim free database pages/WAL without sacrificing history.
@@ -258,6 +381,7 @@ fn enforce(conn: &mut Connection, policy: &Retention, now: i64) -> Result<Cleanu
                     .iter()
                     .map(String::as_str)
                     .chain(item.image.iter().map(String::as_str))
+                    .chain(item.files.iter().map(String::as_str).filter(|p| Path::new(p).starts_with(&received)))
                 {
                     if files.insert(path) {
                         estimate += file_bytes(Path::new(path))?;
@@ -496,6 +620,51 @@ mod tests {
             100 * DAY,
         );
         assert_eq!(result.removed, 1);
+        assert!(original.exists());
+    }
+
+    #[test]
+    fn received_files_count_toward_usage_and_leave_with_their_entry() {
+        let f = Fixture::new();
+        let original = f.directory.join("original.txt");
+        std::fs::write(&original, b"original file").unwrap();
+        let received = f.directory.join(RECEIVED);
+        let add = |hash: &str, timestamp: i64, folder: &str, extra: &[&Path]| {
+            let folder = received.join(folder);
+            std::fs::create_dir_all(&folder).unwrap();
+            std::fs::write(folder.join("big.bin"), vec![1; 700_000]).unwrap();
+            f.add(hash, timestamp, 0);
+            let mut paths = vec![folder.join("big.bin")];
+            paths.extend(extra.iter().map(|p| p.to_path_buf()));
+            f.db()
+                .0
+                .lock()
+                .unwrap()
+                .execute(
+                    "UPDATE items SET kind = 'files', content = ?1 WHERE hash = ?2",
+                    params![serde_json::to_string(&paths).unwrap(), hash],
+                )
+                .unwrap();
+        };
+        add("deleted", DAY, "a", &[&original]);
+        add("expired", 2 * DAY, "b", &[]);
+        add("kept", 99 * DAY, "c", &[]);
+        std::fs::create_dir_all(received.join("d.part")).unwrap();
+        assert!(usage(&f.db().0.lock().unwrap()).unwrap().bytes > 2 * MB);
+
+        let deleted = f.db().list("", 10).unwrap().pop().unwrap();
+        f.db().delete(deleted.id).unwrap();
+        assert!(!received.join("a").exists());
+        assert!(original.exists(), "the user's own files are never removed");
+
+        let result = f.run(Retention { days_enabled: true, ..unlimited() }, 100 * DAY);
+        assert_eq!(result.removed, 1);
+        assert!(!received.join("b").exists());
+        assert!(!received.join("d.part").exists(), "leftovers are cleaned");
+        assert!(received.join("c/big.bin").exists());
+
+        clear(f.db()).unwrap();
+        assert!(received_entries(&f.directory).unwrap().is_empty());
         assert!(original.exists());
     }
 

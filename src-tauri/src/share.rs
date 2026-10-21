@@ -12,9 +12,14 @@
 //! sharing key reaches the new device without the relay being able to read
 //! it. The device token and sharing key are kept in the OS keychain.
 //!
-//! With auto-send on, every new local copy of text, a link or an image is
-//! queued for the other devices. Received items and Pinchy's own clipboard
-//! writes are never sent on, so items do not bounce between devices.
+//! Files travel as one blob, their contents back to back, and are capped at
+//! `MAX_FILES_BYTES` per item. Received files are kept in the app's own
+//! `files` folder, one subfolder per item.
+//!
+//! With auto-send on, every new local copy of text, a link, an image or files
+//! within the cap is queued for the other devices. Received items and
+//! Pinchy's own clipboard writes are never sent on, so items do not bounce
+//! between devices.
 
 use crate::clipboard::{self, CHANGED_EVENT};
 use crate::db::{Db, Item, NewItem};
@@ -53,6 +58,12 @@ const KEY_MISMATCH: &str =
 const UNKNOWN_DEVICE: &str = "다른 기기";
 const NO_PEERS: &str = "보낼 다른 기기가 없어요. 설정에서 기기를 추가해 주세요.";
 const AUTO_SEND_ATTEMPTS: u32 = 3;
+const MB: u64 = 1024 * 1024;
+/// Largest total size of the files in one item. Below the relay's default
+/// blob limit of 64MB.
+pub const MAX_FILES_BYTES: u64 = 50 * MB;
+/// Longest received file name, in UTF-8 bytes. File systems allow 255.
+const MAX_FILE_NAME_BYTES: usize = 200;
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
@@ -223,16 +234,137 @@ impl Key {
     }
 }
 
-/// The sealed description of an item. Image bytes travel as a separate blob.
+/// The sealed description of an item. Image and file bytes travel as a
+/// separate blob.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Meta {
     v: u32,
     kind: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     text: Option<String>,
+    /// For files, their names and sizes in blob order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    files: Option<Vec<FileMeta>>,
     /// The sender's own name for itself.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     from: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+struct FileMeta {
+    name: String,
+    size: u64,
+}
+
+/// The files of a `files` item, checked against the size cap without
+/// reading them.
+fn file_list(content: &str) -> Result<Vec<(PathBuf, FileMeta)>, String> {
+    let paths: Vec<String> = serde_json::from_str(content).map_err(|_| "파일 목록을 읽지 못했어요.")?;
+    let mut files = Vec::with_capacity(paths.len());
+    let mut total = 0;
+    for path in paths {
+        let path = PathBuf::from(path);
+        let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        let meta = std::fs::metadata(&path).map_err(|_| format!("파일을 찾을 수 없어요. ({name})"))?;
+        if !meta.is_file() {
+            return Err(format!("폴더는 보낼 수 없어요. 파일만 보낼 수 있어요. ({name})"));
+        }
+        total += meta.len();
+        files.push((path, FileMeta { name, size: meta.len() }));
+    }
+    if files.is_empty() {
+        return Err("보낼 파일이 없어요.".into());
+    }
+    if total > MAX_FILES_BYTES {
+        return Err(format!(
+            "파일이 너무 커요. 한 번에 {}MB까지 보낼 수 있어요. (지금 {:.1}MB)",
+            MAX_FILES_BYTES / MB,
+            total as f64 / MB as f64
+        ));
+    }
+    Ok(files)
+}
+
+/// Reads the files of a `files` item into one blob.
+fn read_files(content: &str) -> Result<(Vec<FileMeta>, Vec<u8>), String> {
+    let list = file_list(content)?;
+    let mut blob = Vec::with_capacity(list.iter().map(|(_, f)| f.size as usize).sum());
+    let mut files = Vec::with_capacity(list.len());
+    for (path, mut file) in list {
+        let bytes = std::fs::read(&path).map_err(|_| format!("파일을 읽지 못했어요. ({})", file.name))?;
+        file.size = bytes.len() as u64;
+        blob.extend_from_slice(&bytes);
+        files.push(file);
+    }
+    if blob.len() as u64 > MAX_FILES_BYTES {
+        return Err(format!("파일이 너무 커요. 한 번에 {}MB까지 보낼 수 있어요.", MAX_FILES_BYTES / MB));
+    }
+    Ok((files, blob))
+}
+
+/// Splits a received blob back into named files. Names are made safe to
+/// create on macOS and Windows, and unique within the item.
+fn split_files(files: &[FileMeta], blob: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
+    if files.is_empty() || files.iter().map(|f| f.size).sum::<u64>() != blob.len() as u64 {
+        return None;
+    }
+    let mut out: Vec<(String, Vec<u8>)> = Vec::with_capacity(files.len());
+    let mut offset = 0;
+    for file in files {
+        let end = offset + file.size as usize;
+        let base = safe_file_name(&file.name);
+        let mut name = base.clone();
+        let mut n = 2;
+        while out.iter().any(|(taken, _)| taken.eq_ignore_ascii_case(&name)) {
+            name = numbered(&base, n);
+            n += 1;
+        }
+        out.push((name, blob[offset..end].to_vec()));
+        offset = end;
+    }
+    Some(out)
+}
+
+fn safe_file_name(name: &str) -> String {
+    let mut name: String = name
+        .chars()
+        .map(|c| if c.is_control() || matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') { '_' } else { c })
+        .collect();
+    // Windows drops trailing dots and spaces.
+    name = name.trim_end_matches(['.', ' ']).trim_start().to_string();
+    if name.is_empty() {
+        name = "파일".into();
+    }
+    let stem = name.split('.').next().unwrap_or_default().to_ascii_uppercase();
+    let reserved = matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || (stem.len() == 4 && (stem.starts_with("COM") || stem.starts_with("LPT")) && stem.ends_with(|c: char| c.is_ascii_digit()));
+    if reserved {
+        name.insert(0, '_');
+    }
+    if name.len() > MAX_FILE_NAME_BYTES {
+        let (stem, ext) = split_extension(&name);
+        let keep = MAX_FILE_NAME_BYTES.saturating_sub(ext.len());
+        let mut cut = keep.min(stem.len());
+        while !stem.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        name = format!("{}{ext}", &stem[..cut]);
+    }
+    name
+}
+
+/// `report.pdf` → `report (2).pdf`.
+fn numbered(name: &str, n: u32) -> String {
+    let (stem, ext) = split_extension(name);
+    format!("{stem} ({n}){ext}")
+}
+
+/// Splits off the extension, dot included; short extensions only.
+fn split_extension(name: &str) -> (&str, &str) {
+    match name.rfind('.') {
+        Some(dot) if dot > 0 && name.len() - dot <= 16 => name.split_at(dot),
+        _ => (name, ""),
+    }
 }
 
 /// Trims a device name and caps its length; empty means none.
@@ -662,12 +794,18 @@ impl Relay {
     fn push(&self, item: &Item) -> Result<usize, String> {
         let from = self.name.clone();
         let (meta, blob) = match item.kind.as_str() {
-            "text" | "link" => (Meta { v: 1, kind: item.kind.clone(), text: Some(item.content.clone()), from }, None),
+            "text" | "link" => {
+                (Meta { v: 1, kind: item.kind.clone(), text: Some(item.content.clone()), files: None, from }, None)
+            }
             "image" => {
                 let bytes = std::fs::read(&item.content).map_err(|_| "이미지 파일을 찾을 수 없어요.")?;
-                (Meta { v: 1, kind: "image".into(), text: None, from }, Some(bytes))
+                (Meta { v: 1, kind: "image".into(), text: None, files: None, from }, Some(bytes))
             }
-            _ => return Err("파일은 아직 보낼 수 없어요. 텍스트, 링크, 이미지만 보낼 수 있어요.".into()),
+            "files" => {
+                let (files, bytes) = read_files(&item.content)?;
+                (Meta { v: 1, kind: "files".into(), text: None, files: Some(files), from }, Some(bytes))
+            }
+            kind => return Err(format!("보낼 수 없는 항목이에요. ({kind})")),
         };
         let id = random_id();
         let envelope = self.key.seal("meta", &id, &serde_json::to_vec(&meta).map_err(|e| e.to_string())?);
@@ -694,8 +832,8 @@ impl Relay {
         Ok(())
     }
 
-    /// Downloads and opens an incoming item. Images are written to the cache
-    /// by `into_item`, under the history's file lock.
+    /// Downloads and opens an incoming item. Images and files are written to
+    /// disk by `into_item`, under the history's file lock.
     fn open(&self, incoming: &Incoming) -> Result<Opened, ReceiveError> {
         let envelope = STANDARD
             .decode(&incoming.envelope)
@@ -703,27 +841,38 @@ impl Relay {
         let meta = self.key.open("meta", &incoming.id, &envelope).ok_or(ReceiveError::Locked)?;
         let meta: Meta = serde_json::from_slice(&meta).map_err(|e| ReceiveError::Invalid(e.to_string()))?;
         let from = meta.from.as_deref().and_then(clean_name).unwrap_or_else(|| UNKNOWN_DEVICE.into());
-        let content = match (meta.kind.as_str(), meta.text) {
-            ("text" | "link", Some(text)) if !text.trim().is_empty() => Content::Text(text),
-            ("image", _) if incoming.blob_size.is_some() => {
-                let response = self
-                    .http
-                    .send(self.http.get(&format!("/v1/items/{}/blob", incoming.id)).timeout(Duration::from_secs(600)))
-                    .map_err(|e| ReceiveError::Network(e.message))?;
-                let sealed = response.bytes().map_err(|e| ReceiveError::Network(e.to_string()))?;
-                let png = self.key.open("blob", &incoming.id, &sealed).ok_or(ReceiveError::Locked)?;
+        let content = match (meta.kind.as_str(), meta.text, meta.files) {
+            ("text" | "link", Some(text), _) if !text.trim().is_empty() => Content::Text(text),
+            ("image", _, _) if incoming.blob_size.is_some() => {
+                let png = self.blob(incoming)?;
                 let (w, h) = png_size(&png).ok_or_else(|| ReceiveError::Invalid("blob is not a PNG image".into()))?;
                 Content::Png(png, w, h)
             }
-            (kind, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
+            ("files", _, Some(files)) if incoming.blob_size.is_some() => {
+                let blob = self.blob(incoming)?;
+                let files = split_files(&files, &blob)
+                    .ok_or_else(|| ReceiveError::Invalid("file sizes do not match the blob".into()))?;
+                Content::Files(files)
+            }
+            (kind, _, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
         };
         Ok(Opened { from, content })
+    }
+
+    fn blob(&self, incoming: &Incoming) -> Result<Vec<u8>, ReceiveError> {
+        let response = self
+            .http
+            .send(self.http.get(&format!("/v1/items/{}/blob", incoming.id)).timeout(Duration::from_secs(600)))
+            .map_err(|e| ReceiveError::Network(e.message))?;
+        let sealed = response.bytes().map_err(|e| ReceiveError::Network(e.to_string()))?;
+        self.key.open("blob", &incoming.id, &sealed).ok_or(ReceiveError::Locked)
     }
 }
 
 enum Content {
     Text(String),
     Png(Vec<u8>, u32, u32),
+    Files(Vec<(String, Vec<u8>)>),
 }
 
 struct Opened {
@@ -732,10 +881,11 @@ struct Opened {
 }
 
 impl Opened {
-    fn into_item(self, images_dir: &Path) -> Option<NewItem> {
+    fn into_item(self, images_dir: &Path, files_dir: &Path) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
             Content::Png(png, w, h) => clipboard::png_item(images_dir, &png, w, h)?,
+            Content::Files(files) => clipboard::received_files_item(files_dir, &files)?,
         };
         item.source_app = Some(self.from.clone());
         item.app_color = Some(RECEIVED_COLOR.into());
@@ -943,9 +1093,10 @@ pub async fn send_item(app: AppHandle, id: i64) -> Result<usize, String> {
 // ---------------------------------------------------------------------------
 // Auto-send
 
-/// Whether a stored item is a new local copy worth sending on.
+/// Whether a stored item is a new local copy worth sending on. Files must
+/// also fit under the cap; `copied` checks that.
 fn auto_sendable(item: &Item) -> bool {
-    matches!(item.kind.as_str(), "text" | "link" | "image") && item.origin_device.is_none()
+    matches!(item.kind.as_str(), "text" | "link" | "image" | "files") && item.origin_device.is_none()
 }
 
 /// Called by the clipboard watcher after it stores a new local copy.
@@ -955,7 +1106,9 @@ pub fn copied(app: &AppHandle, hash: &str) {
         return;
     }
     let Ok(Some(item)) = app.state::<Db>().get_by_hash(hash) else { return };
-    if !auto_sendable(&item) {
+    // Folders and files over the cap are left for a manual send, which
+    // explains why they cannot go.
+    if !auto_sendable(&item) || (item.kind == "files" && file_list(&item.content).is_err()) {
         return;
     }
     if let Some(outbox) = app.state::<ShareState>().outbox.lock().unwrap().as_ref() {
@@ -988,19 +1141,27 @@ fn send_loop(app: AppHandle, queue: mpsc::Receiver<i64>) {
 // ---------------------------------------------------------------------------
 // Receiver
 
-fn store(app: &AppHandle, relay: &Relay, incoming: &Incoming, images_dir: &Path) -> Result<(), ReceiveError> {
+fn store(app: &AppHandle, relay: &Relay, incoming: &Incoming, dirs: &Dirs) -> Result<(), ReceiveError> {
     let opened = relay.open(incoming)?;
     let db = app.state::<Db>();
     {
         let _files = db.1.lock().unwrap();
-        let item = opened.into_item(images_dir).ok_or_else(|| ReceiveError::Network("이미지를 저장하지 못했어요.".into()))?;
+        let item = opened
+            .into_item(&dirs.images, &dirs.files)
+            .ok_or_else(|| ReceiveError::Network("받은 이미지나 파일을 저장하지 못했어요.".into()))?;
         db.upsert(item).map_err(|e| ReceiveError::Network(e.to_string()))?;
     }
     let _ = app.emit(CHANGED_EVENT, ());
     Ok(())
 }
 
-pub fn start(app: AppHandle, images_dir: PathBuf) {
+/// Where received images and files are written.
+struct Dirs {
+    images: PathBuf,
+    files: PathBuf,
+}
+
+pub fn start(app: AppHandle, images_dir: PathBuf, files_dir: PathBuf) {
     let (outbox, queue) = mpsc::channel();
     *app.state::<ShareState>().outbox.lock().unwrap() = Some(outbox);
     let sender = app.clone();
@@ -1008,13 +1169,14 @@ pub fn start(app: AppHandle, images_dir: PathBuf) {
         .name("share-sender".into())
         .spawn(move || send_loop(sender, queue))
         .expect("spawn share sender");
+    let dirs = Dirs { images: images_dir, files: files_dir };
     std::thread::Builder::new()
         .name("share-receiver".into())
-        .spawn(move || receive_loop(app, images_dir))
+        .spawn(move || receive_loop(app, dirs))
         .expect("spawn share receiver");
 }
 
-fn receive_loop(app: AppHandle, images_dir: PathBuf) {
+fn receive_loop(app: AppHandle, dirs: Dirs) {
     let state = app.state::<ShareState>();
     let mut seen = u64::MAX;
     let mut locked: HashSet<String> = HashSet::new();
@@ -1052,7 +1214,7 @@ fn receive_loop(app: AppHandle, images_dir: PathBuf) {
         let mut failed = None;
         let fresh: Vec<&Incoming> = items.iter().filter(|i| !locked.contains(&i.id)).collect();
         for incoming in fresh {
-            match store(&app, &relay, incoming, &images_dir) {
+            match store(&app, &relay, incoming, &dirs) {
                 Ok(()) => {
                     if let Err(e) = relay.ack(&incoming.id) {
                         failed = Some(e);
@@ -1167,11 +1329,59 @@ mod tests {
 
     #[test]
     fn meta_keeps_text_and_omits_it_for_images() {
-        let text = Meta { v: 1, kind: "text".into(), text: Some("안녕".into()), from: Some("집 맥".into()) };
-        let image = Meta { v: 1, kind: "image".into(), text: None, from: None };
+        let text = Meta { v: 1, kind: "text".into(), text: Some("안녕".into()), files: None, from: Some("집 맥".into()) };
+        let image = Meta { v: 1, kind: "image".into(), text: None, files: None, from: None };
         assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":1,"kind":"image"}"#);
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&text).unwrap()).unwrap();
         assert_eq!(restored, text);
+        let files = Meta {
+            v: 1, kind: "files".into(), text: None, from: None,
+            files: Some(vec![FileMeta { name: "보고서.pdf".into(), size: 3 }]),
+        };
+        let restored: Meta = serde_json::from_str(&serde_json::to_string(&files).unwrap()).unwrap();
+        assert_eq!(restored, files);
+    }
+
+    #[test]
+    fn files_are_capped_and_folders_refused() {
+        let dir = std::env::temp_dir().join(format!("pinchy-files-{}-{}", std::process::id(), crate::db::now_ms()));
+        std::fs::create_dir_all(dir.join("folder")).unwrap();
+        let (a, b, big) = (dir.join("a.txt"), dir.join("b.bin"), dir.join("big.bin"));
+        std::fs::write(&a, b"hello").unwrap();
+        std::fs::write(&b, [0u8, 1, 2]).unwrap();
+        std::fs::File::create(&big).unwrap().set_len(MAX_FILES_BYTES + 1).unwrap();
+        let list = |paths: &[&Path]| serde_json::to_string(&paths).unwrap();
+
+        let (files, blob) = read_files(&list(&[&a, &b])).unwrap();
+        assert_eq!(files, vec![FileMeta { name: "a.txt".into(), size: 5 }, FileMeta { name: "b.bin".into(), size: 3 }]);
+        assert_eq!(blob, b"hello\x00\x01\x02");
+        assert!(file_list(&list(&[&big])).unwrap_err().contains("50MB"));
+        assert!(file_list(&list(&[&a, &dir.join("folder")])).unwrap_err().contains("폴더"));
+        assert!(file_list(&list(&[&dir.join("missing")])).is_err());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn received_files_are_split_with_safe_unique_names() {
+        let meta = |name: &str, size| FileMeta { name: name.into(), size };
+        let files = [meta("a.txt", 2), meta("../../A.txt", 1), meta("a.txt", 0)];
+        let split = split_files(&files, b"hi!").unwrap();
+        let names: Vec<&str> = split.iter().map(|(n, _)| n.as_str()).collect();
+        assert_eq!(names, ["a.txt", ".._.._A.txt", "a (2).txt"]);
+        assert_eq!(split[0].1, b"hi");
+        assert_eq!(split[1].1, b"!");
+        assert!(split[2].1.is_empty());
+        assert!(split_files(&files, b"too long").is_none());
+        assert!(split_files(&[], b"").is_none());
+
+        assert_eq!(safe_file_name("a/b\\c:d?.txt"), "a_b_c_d_.txt");
+        assert_eq!(safe_file_name(" 메모. . "), "메모");
+        assert_eq!(safe_file_name(".."), "파일");
+        assert_eq!(safe_file_name("con.txt"), "_con.txt");
+        assert_eq!(safe_file_name("COM1"), "_COM1");
+        assert_eq!(safe_file_name("computer.txt"), "computer.txt");
+        let long = safe_file_name(&format!("{}.pdf", "가".repeat(100)));
+        assert!(long.len() <= MAX_FILE_NAME_BYTES && long.ends_with("가.pdf"));
     }
 
     #[test]
@@ -1182,7 +1392,7 @@ mod tests {
     }
 
     #[test]
-    fn only_new_local_text_links_and_images_are_auto_sent() {
+    fn only_new_local_items_are_auto_sent() {
         let item = |kind: &str, origin: Option<&str>| Item {
             id: 1, kind: kind.into(), content: String::new(), preview: String::new(), source_app: None,
             app_icon: None, app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None,
@@ -1191,7 +1401,8 @@ mod tests {
         assert!(auto_sendable(&item("text", None)));
         assert!(auto_sendable(&item("link", None)));
         assert!(auto_sendable(&item("image", None)));
-        assert!(!auto_sendable(&item("files", None)), "files are not sent yet");
+        assert!(auto_sendable(&item("files", None)));
+        assert!(!auto_sendable(&item("files", Some("회사 맥"))));
         assert!(!auto_sendable(&item("text", Some("회사 맥"))), "received items do not bounce back");
     }
 
@@ -1277,13 +1488,23 @@ mod tests {
         };
         assert_eq!(a.push(&item("text", "집에서 보낸 문장".into())).unwrap(), 1);
         assert_eq!(a.push(&item("image", source.to_string_lossy().into_owned())).unwrap(), 1);
+        let note = images.join("메모.txt");
+        std::fs::write(&note, "파일 내용").unwrap();
+        let files = serde_json::to_string(&[&note, &source]).unwrap();
+        assert_eq!(a.push(&item("files", files)).unwrap(), 1);
         assert!(a.push(&item("files", "[]".into())).is_err());
         let incoming = b.inbox(5).unwrap();
+        let received = images.join("received");
         let opened: Vec<NewItem> =
-            incoming.iter().map(|i| b.open(i).ok().unwrap().into_item(&images).unwrap()).collect();
+            incoming.iter().map(|i| b.open(i).ok().unwrap().into_item(&images, &received).unwrap()).collect();
         assert_eq!(opened[0].content, "집에서 보낸 문장");
         assert_eq!(opened[0].origin_device.as_deref(), Some("집 맥"));
         assert_eq!(std::fs::read(&opened[1].content).unwrap(), png);
+        let paths: Vec<PathBuf> = serde_json::from_str(&opened[2].content).unwrap();
+        assert_eq!(paths[0].file_name().unwrap(), "메모.txt");
+        assert_eq!(std::fs::read_to_string(&paths[0]).unwrap(), "파일 내용");
+        assert_eq!(std::fs::read(&paths[1]).unwrap(), png);
+        assert!(paths[0].starts_with(&received));
         for i in &incoming {
             b.ack(&i.id).unwrap();
         }

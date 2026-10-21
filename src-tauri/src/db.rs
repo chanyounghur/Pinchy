@@ -175,7 +175,7 @@ impl Db {
         let item = self.get(id)?;
         let conn = self.0.lock().unwrap();
         conn.execute("DELETE FROM items WHERE id = ?1", params![id])?;
-        if let Some(item) = &item { crate::storage::remove_item_images(&conn, item); }
+        if let Some(item) = &item { crate::storage::remove_item_files(&conn, item); }
         Ok(item)
     }
 

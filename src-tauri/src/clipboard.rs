@@ -157,6 +157,32 @@ pub fn text_item(text: String) -> NewItem {
     }
 }
 
+/// Stores files received from another device in their own folder under
+/// `files_dir`, named by content hash, and lists them as a `files` item.
+pub fn received_files_item(files_dir: &Path, files: &[(String, Vec<u8>)]) -> Option<NewItem> {
+    let mut h = Sha256::new();
+    for (name, bytes) in files {
+        h.update(name.as_bytes());
+        h.update([0]);
+        h.update((bytes.len() as u64).to_le_bytes());
+        h.update(bytes);
+    }
+    let folder = files_dir.join(format!("{:x}", h.finalize()));
+    let paths: Vec<PathBuf> = files.iter().map(|(name, _)| folder.join(name)).collect();
+    if !paths.iter().all(|p| p.is_file()) {
+        // Write next to the final folder, then move it in whole.
+        let partial = folder.with_extension("part");
+        let _ = std::fs::remove_dir_all(&partial);
+        std::fs::create_dir_all(&partial).ok()?;
+        for (name, bytes) in files {
+            std::fs::write(partial.join(name), bytes).ok()?;
+        }
+        let _ = std::fs::remove_dir_all(&folder);
+        std::fs::rename(&partial, &folder).ok()?;
+    }
+    Some(files_item(paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()))
+}
+
 fn files_item(files: Vec<String>) -> NewItem {
     let names: Vec<String> = files
         .iter()

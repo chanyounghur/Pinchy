@@ -1,6 +1,6 @@
 # Pinchy Relay
 
-여러 컴퓨터의 Pinchy가 텍스트, 링크, 이미지를 주고받을 때 거쳐 가는 중계 서버입니다. 한 기기가 보낸 항목은 연결된 다른 모든 기기의 우편함에 들어가고, 모든 기기가 받아 가면 삭제됩니다. 받지 않은 항목은 7일 뒤 삭제됩니다.
+여러 컴퓨터의 Pinchy가 텍스트, 링크, 이미지, 파일을 주고받을 때 거쳐 가는 중계 서버입니다. 한 기기가 보낸 항목은 연결된 다른 모든 기기의 우편함에 들어가고, 모든 기기가 받아 가면 삭제됩니다. 받지 않은 항목은 7일 뒤 삭제됩니다.
 
 내용과 기기 이름은 각 기기의 Pinchy가 기기끼리만 아는 공유 키로 암호화합니다(XChaCha20-Poly1305). 서버는 암호문과 크기만 알고, 공유 키는 서버를 거쳐 가더라도 서버가 풀 수 없는 형태로만 전달됩니다.
 
@@ -34,7 +34,7 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 | `--contact` | `PINCHY_RELAY_CONTACT` | Let's Encrypt 만료 알림을 받을 이메일 |
 | `--staging` | `PINCHY_RELAY_STAGING` | Let's Encrypt 테스트 환경 사용 (브라우저가 신뢰하지 않는 인증서) |
 | `--retention-days` | `PINCHY_RELAY_RETENTION_DAYS` | 받아 가지 않은 항목 보관 기간. 기본값 7일 |
-| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지 최대 크기. 기본값 64MB |
+| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 64MB. Pinchy는 파일을 한 번에 50MB까지 보내므로 그보다 크게 두세요 |
 
 처음에는 `--staging`과 임시 `--cache-dir`로 발급이 되는지 먼저 확인하세요. 운영 환경은 같은 도메인에서 검증에 여러 번 실패하면 한동안 발급을 막습니다. 인증서 저장 폴더를 유지하면 재시작할 때 다시 발급받지 않습니다.
 
@@ -83,9 +83,9 @@ grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log |
 | `GET /v1/me`, `PUT /v1/me` | 토큰 | 연결된 기기 수 확인, 이 기기의 봉인한 이름(`label`) 변경 |
 | `GET /v1/devices`, `DELETE /v1/devices/{id}` | 토큰 | 기기 목록, 기기 해제 |
 | `POST /v1/items` | 토큰 | `{"id", "envelope", "has_blob"}`. 다른 모든 기기에 전달. `id`는 보내는 기기가 정한 32자 소문자 16진수 |
-| `PUT /v1/items/{id}/blob` | 토큰 | 이미지 본문 업로드. 업로드가 끝나야 받는 기기에 보입니다 |
+| `PUT /v1/items/{id}/blob` | 토큰 | 이미지·파일 본문 업로드. 업로드가 끝나야 받는 기기에 보입니다 |
 | `GET /v1/inbox?wait=25` | 토큰 | 받을 항목 목록. 비어 있으면 최대 `wait`초(최대 30) 기다렸다가 응답 |
-| `GET /v1/items/{id}/blob` | 토큰 | 이미지 본문 다운로드 |
+| `GET /v1/items/{id}/blob` | 토큰 | 이미지·파일 본문 다운로드 |
 | `POST /v1/items/{id}/ack` | 토큰 | 받았음을 알림. 모든 기기가 받으면 서버에서 삭제 |
 
 ## macOS 상시 실행
