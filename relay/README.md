@@ -96,28 +96,28 @@ grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log |
 
 빌드한 실행 파일을 `~/.local/bin/pinchy-relay`에 설치하고, 로그인 시 시작되고 종료되면 다시 실행되는 LaunchAgent(`com.chanyounghur.pinchy-relay`)로 등록합니다. 기본으로 `0.0.0.0:8443`에서 받으며 `PINCHY_RELAY_LISTEN`으로 바꿀 수 있습니다. 해당 포트를 다른 프로그램이 쓰고 있으면 설치를 중단합니다. 연결된 기기가 없으면 설치가 끝날 때 첫 연결 코드를 보여 줍니다.
 
+서버 코드가 바뀌었을 때는 인자 없이 다시 실행하면 됩니다. 도메인과 이메일은 이전 설치에서 가져오고, 새로 빌드한 파일이 이전과 같으면 아무것도 바꾸지 않습니다.
+
+```bash
+~/workspace/Pinchy/relay/install-macos.sh
+```
+
 - 데이터: `~/Library/Application Support/pinchy-relay/` (`relay.db`, `blobs/`)
 - 인증서: `~/Library/Application Support/pinchy-relay/acme/`
 - 로그: `~/Library/Application Support/pinchy-relay/relay.log`
 
-다시 실행하면 새로 빌드한 파일로 교체합니다. 제거하려면 아래 명령을 실행하세요.
+Rust는 rustup 기본 위치(`~/.cargo/bin`)에서 찾고, 기본 SDK가 Command Line Tools보다 새로워서 링크가 깨지는 경우(`tapi error: malformed file ... unknown architecture`) Command Line Tools 버전에 맞는 SDK를 골라 씁니다.
+
+### 방화벽
+
+macOS 방화벽이 켜져 있으면 `pinchy-relay`의 수신 연결을 허용해야 합니다. 허용하지 않으면 외부 연결이 TLS 핸드셰이크 단계에서 멈추고, 인증서 발급도 실패합니다. 설치 스크립트가 처음 설치할 때 한 번 허용하며, 이때 관리자 비밀번호를 묻습니다. 방화벽은 허용한 경로(`~/.local/bin/pinchy-relay`)를 다시 빌드한 뒤에도 계속 허용하므로 이후 업데이트에서는 묻지 않습니다.
+
+### 제거
 
 ```bash
 launchctl bootout gui/$(id -u)/com.chanyounghur.pinchy-relay
 rm ~/Library/LaunchAgents/com.chanyounghur.pinchy-relay.plist ~/.local/bin/pinchy-relay
-```
-
-macOS 방화벽을 켜 두었다면 `pinchy-relay`의 수신 연결을 허용해야 합니다. 허용하지 않으면 외부 연결이 TLS 핸드셰이크 단계에서 멈추고, 인증서 발급도 실패합니다. 다시 설치하면 실행 파일 서명이 바뀌므로 다시 허용하세요.
-
-```bash
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --add ~/.local/bin/pinchy-relay
-sudo /usr/libexec/ApplicationFirewall/socketfilterfw --unblockapp ~/.local/bin/pinchy-relay
-```
-
-빌드 중 `tapi error: malformed file ... unknown architecture` 링커 오류가 나면 Command Line Tools보다 새 SDK가 기본으로 잡힌 것입니다. 설치된 SDK 중 Command Line Tools 버전에 맞는 것을 지정하세요.
-
-```bash
-SDKROOT=/Library/Developer/CommandLineTools/SDKs/MacOSX26.5.sdk ./install-macos.sh <도메인>
+sudo /usr/libexec/ApplicationFirewall/socketfilterfw --remove ~/.local/bin/pinchy-relay
 ```
 
 ## ipTIME 공유기 설정
