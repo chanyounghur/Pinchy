@@ -7,7 +7,9 @@
 # The domain and contact are remembered from the previous install, so later
 # updates need no arguments, and a build identical to the installed one
 # leaves the running relay alone. PINCHY_RELAY_LISTEN overrides the listen
-# address (default 0.0.0.0:8443).
+# address (default 0.0.0.0:8443). PINCHY_RELAY_RETENTION_DAYS,
+# PINCHY_RELAY_MAX_STORAGE_MB and PINCHY_RELAY_SYNC_CONCEALED (true/false)
+# set the policy and are remembered the same way.
 set -eu
 
 LABEL=com.chanyounghur.pinchy-relay
@@ -29,6 +31,13 @@ CONTACT=${2:-$(saved PINCHY_RELAY_CONTACT)}
 LISTEN=${PINCHY_RELAY_LISTEN:-$(saved PINCHY_RELAY_LISTEN)}
 LISTEN=${LISTEN:-0.0.0.0:8443}
 PORT=${LISTEN##*:}
+RETENTION=${PINCHY_RELAY_RETENTION_DAYS:-$(saved PINCHY_RELAY_RETENTION_DAYS)}
+MAX_STORAGE=${PINCHY_RELAY_MAX_STORAGE_MB:-$(saved PINCHY_RELAY_MAX_STORAGE_MB)}
+SYNC_CONCEALED=${PINCHY_RELAY_SYNC_CONCEALED:-$(saved PINCHY_RELAY_SYNC_CONCEALED)}
+case "${SYNC_CONCEALED:-}" in
+  ""|true|false) ;;
+  *) echo "PINCHY_RELAY_SYNC_CONCEALED must be true or false" >&2; exit 64 ;;
+esac
 if [ -z "$DOMAIN" ]; then
   echo "usage: $0 <domain> [contact-email]" >&2
   exit 64
@@ -57,7 +66,10 @@ chmod 700 "$DATA"
 UNCHANGED=false
 if [ -f "$BUILD_MARK" ] && [ "$(cat "$BUILD_MARK")" = "$BUILD" ] && [ -x "$BIN" ] &&
   [ "$(saved PINCHY_RELAY_DOMAIN)" = "$DOMAIN" ] && [ "$(saved PINCHY_RELAY_CONTACT)" = "$CONTACT" ] &&
-  [ "$(saved PINCHY_RELAY_LISTEN)" = "$LISTEN" ] && launchctl print "$DOMAIN_TARGET/$LABEL" >/dev/null 2>&1; then
+  [ "$(saved PINCHY_RELAY_LISTEN)" = "$LISTEN" ] && [ "$(saved PINCHY_RELAY_RETENTION_DAYS)" = "$RETENTION" ] &&
+  [ "$(saved PINCHY_RELAY_MAX_STORAGE_MB)" = "$MAX_STORAGE" ] &&
+  [ "$(saved PINCHY_RELAY_SYNC_CONCEALED)" = "$SYNC_CONCEALED" ] &&
+  launchctl print "$DOMAIN_TARGET/$LABEL" >/dev/null 2>&1; then
   UNCHANGED=true
 fi
 
@@ -75,11 +87,14 @@ if [ "$UNCHANGED" = false ]; then
   fi
   mv "$STAGED" "$BIN"
 
-  CONTACT_ENV=""
-  if [ -n "$CONTACT" ]; then
-    CONTACT_ENV="		<key>PINCHY_RELAY_CONTACT</key>
-		<string>$CONTACT</string>"
-  fi
+  # Optional settings go into the plist only when set.
+  optional_env() {
+    [ -n "$2" ] && printf '\t\t<key>%s</key>\n\t\t<string>%s</string>\n' "$1" "$2" || true
+  }
+  CONTACT_ENV=$(optional_env PINCHY_RELAY_CONTACT "$CONTACT")
+  POLICY_ENV=$(optional_env PINCHY_RELAY_RETENTION_DAYS "$RETENTION"
+    optional_env PINCHY_RELAY_MAX_STORAGE_MB "$MAX_STORAGE"
+    optional_env PINCHY_RELAY_SYNC_CONCEALED "$SYNC_CONCEALED")
 
   cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -103,6 +118,7 @@ if [ "$UNCHANGED" = false ]; then
 		<key>PINCHY_RELAY_CACHE_DIR</key>
 		<string>$DATA/acme</string>
 $CONTACT_ENV
+$POLICY_ENV
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>

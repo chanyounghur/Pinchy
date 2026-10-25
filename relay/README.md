@@ -106,7 +106,11 @@ grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log |
 ./install-macos.sh <도메인> [이메일]
 ```
 
-빌드한 실행 파일을 `~/.local/bin/pinchy-relay`에 설치하고, 로그인 시 시작되고 종료되면 다시 실행되는 LaunchAgent(`com.chanyounghur.pinchy-relay`)로 등록합니다. 기본으로 `0.0.0.0:8443`에서 받으며 `PINCHY_RELAY_LISTEN`으로 바꿀 수 있습니다. 해당 포트를 다른 프로그램이 쓰고 있으면 설치를 중단합니다. 연결된 기기가 없으면 설치가 끝날 때 첫 연결 코드를 보여 줍니다.
+빌드한 실행 파일을 `~/.local/bin/pinchy-relay`에 설치하고, 로그인 시 시작되고 종료되면 다시 실행되는 LaunchAgent(`com.chanyounghur.pinchy-relay`)로 등록합니다. 기본으로 `0.0.0.0:8443`에서 받으며 `PINCHY_RELAY_LISTEN`으로 바꿀 수 있습니다. 보관 정책은 `PINCHY_RELAY_RETENTION_DAYS`, `PINCHY_RELAY_MAX_STORAGE_MB`, `PINCHY_RELAY_SYNC_CONCEALED=true`로 넘기면 LaunchAgent에 저장되어 다음 업데이트에도 유지됩니다.
+
+```bash
+PINCHY_RELAY_SYNC_CONCEALED=true ./install-macos.sh <도메인> [이메일]
+``` 해당 포트를 다른 프로그램이 쓰고 있으면 설치를 중단합니다. 연결된 기기가 없으면 설치가 끝날 때 첫 연결 코드를 보여 줍니다.
 
 서버 코드가 바뀌었을 때는 인자 없이 다시 실행하면 됩니다. 도메인과 이메일은 이전 설치에서 가져오고, 새로 빌드한 파일이 이전과 같으면 아무것도 바꾸지 않습니다.
 
