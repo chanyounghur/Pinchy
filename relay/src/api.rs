@@ -1,8 +1,11 @@
 //! HTTP API. Routes under `/v1` need `Authorization: Bearer <device token>`,
 //! except the ones a joining device uses before it has a token.
+//!
+//! The history lives on the relay: devices `PUT` items, `DELETE` them and
+//! follow `/v1/changes` to mirror each other.
 
 use crate::pairing::{Answer, Joining, PairingError};
-use crate::store::{valid_item_id, CreateError, Device, InboxItem, Store};
+use crate::store::{valid_item_id, Device, PutError, PutOutcome, Store};
 use axum::{
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State},
@@ -24,8 +27,10 @@ use std::{
 };
 use tokio::{io::AsyncWriteExt, sync::broadcast};
 
-/// Longest a client may wait for new mail in one request.
+/// Longest a client may wait for new changes in one request.
 const MAX_WAIT_SECS: u64 = 30;
+/// Most changes returned per request.
+const MAX_CHANGES: i64 = 200;
 const FAILURE_WINDOW: Duration = Duration::from_secs(600);
 const MAX_FAILURES: u32 = 20;
 /// Sealed device names, SPAKE2 messages and sealed keys are all small.
@@ -36,24 +41,46 @@ pub struct Limits {
     pub max_blob_bytes: u64,
 }
 
+/// What every device follows. Set by the relay's options and handed to the
+/// clients as `/v1/policy`; the relay enforces the retention itself.
+#[derive(Clone, serde::Serialize)]
+pub struct Policy {
+    /// Items untouched for this long are removed from every device.
+    pub retention_days: u32,
+    /// Oldest items go first once the history grows past this.
+    pub max_storage_mb: u64,
+    pub max_blob_mb: u64,
+    /// Whether devices sync copies their clipboard marks as concealed
+    /// (password managers). The relay cannot tell; the clients enforce it.
+    pub sync_concealed: bool,
+}
+
 pub struct AppState {
     pub store: Store,
     pub limits: Limits,
+    pub policy: Policy,
     pub joining: Joining,
-    /// Wakes long-polling inbox requests when mail becomes visible.
+    /// Wakes long-polling change requests when the feed grows.
     changed: broadcast::Sender<()>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
 }
 
 impl AppState {
-    pub fn new(store: Store, limits: Limits) -> Arc<Self> {
+    pub fn new(store: Store, limits: Limits, policy: Policy) -> Arc<Self> {
         Arc::new(AppState {
             store,
             limits,
+            policy,
             joining: Joining::default(),
             changed: broadcast::channel(16).0,
             failures: Mutex::default(),
         })
+    }
+
+    /// Tells waiting clients that the feed changed. Called after every
+    /// change, including the relay's own purges.
+    pub fn notify(&self) {
+        let _ = self.changed.send(());
     }
 
     /// Prints a new first-device code when no device exists and the old one
@@ -342,43 +369,143 @@ async fn pairing_result(
     }
 }
 
+async fn policy(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    auth(&state, &headers, addr.ip())?;
+    let usage = state.store.usage().map_err(internal)?;
+    Ok(Json(json!({
+        "retention_days": state.policy.retention_days,
+        "max_storage_mb": state.policy.max_storage_mb,
+        "max_blob_mb": state.policy.max_blob_mb,
+        "sync_concealed": state.policy.sync_concealed,
+        "usage": usage,
+    })))
+}
+
+/// Mints a one-time join code for a device that will scan it (with the
+/// sharing key, which the relay never sees) instead of typing a code.
+async fn create_join_code(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    let device = auth(&state, &headers, addr.ip())?;
+    let code = state.joining.create_join_code(&device.id);
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({ "code": code, "expires_in": crate::pairing::JOIN_CODE_TTL.as_secs() })),
+    )
+        .into_response())
+}
+
+async fn cancel_join_code(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let device = auth(&state, &headers, addr.ip())?;
+    state.joining.cancel_join_code(&device.id);
+    Ok(StatusCode::NO_CONTENT)
+}
+
 #[derive(Deserialize)]
-struct NewItem {
-    id: String,
+struct Join {
+    code: String,
+    label: String,
+}
+
+/// Registers the device that scanned a join code.
+async fn join(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Json(body): Json<Join>,
+) -> Result<Response, ApiError> {
+    if state.throttled(addr.ip()) {
+        return Err(TOO_MANY);
+    }
+    let label = field(&body.label, MAX_SMALL_FIELD)?;
+    if !state.joining.take_join_code(body.code.trim()) {
+        state.record_failure(addr.ip());
+        return Err(ApiError(StatusCode::FORBIDDEN, "wrong or expired code"));
+    }
+    let (device, token) = state.store.add_device(&label).map_err(internal)?;
+    Ok((StatusCode::CREATED, Json(json!({ "device_id": device.id, "token": token }))).into_response())
+}
+
+#[derive(Deserialize)]
+struct PutItem {
     /// Base64 of the encrypted envelope.
     envelope: String,
     #[serde(default)]
     has_blob: bool,
 }
 
-async fn create_item(
+/// Creates an item or replaces its envelope. The response says whether a
+/// blob upload must follow before the item becomes visible.
+async fn put_item(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
     headers: HeaderMap,
-    Json(item): Json<NewItem>,
+    Json(item): Json<PutItem>,
 ) -> Result<Response, ApiError> {
     let device = auth(&state, &headers, addr.ip())?;
-    if !valid_item_id(&item.id) {
+    if !valid_item_id(&id) {
         return Err(ApiError(StatusCode::BAD_REQUEST, "item id must be 32 lowercase hex characters"));
     }
-    let envelope = base64::engine::general_purpose::STANDARD
+    let envelope = STANDARD
         .decode(&item.envelope)
         .map_err(|_| ApiError(StatusCode::BAD_REQUEST, "envelope must be base64"))?;
     if envelope.is_empty() || envelope.len() > state.limits.max_envelope_bytes {
         return Err(ApiError(StatusCode::PAYLOAD_TOO_LARGE, "envelope is empty or too large"));
     }
-    let recipients = match state.store.create_item(&device, &item.id, &envelope, item.has_blob) {
-        Ok(n) => n,
-        Err(CreateError::Duplicate) => return Err(ApiError(StatusCode::CONFLICT, "item id already used")),
-        Err(CreateError::NoRecipients) => {
-            return Err(ApiError(StatusCode::UNPROCESSABLE_ENTITY, "no other devices to deliver to"))
+    let outcome = match state.store.put_item(&device, &id, &envelope, item.has_blob) {
+        Ok(outcome) => outcome,
+        Err(PutError::Deleted) => return Err(ApiError(StatusCode::GONE, "item was deleted")),
+        Err(PutError::BlobMismatch) => {
+            return Err(ApiError(StatusCode::CONFLICT, "an item cannot gain or lose its blob"))
         }
-        Err(CreateError::Db(e)) => return Err(internal(e)),
+        Err(PutError::Db(e)) => return Err(internal(e)),
     };
-    if !item.has_blob {
-        let _ = state.changed.send(());
+    let (status, blob_pending) = match outcome {
+        PutOutcome::Created => (StatusCode::CREATED, false),
+        PutOutcome::AwaitingBlob => (StatusCode::CREATED, true),
+        PutOutcome::Updated => (StatusCode::OK, false),
+    };
+    if !blob_pending {
+        state.notify();
     }
-    Ok((StatusCode::CREATED, Json(json!({ "recipients": recipients }))).into_response())
+    Ok((status, Json(json!({ "blob_pending": blob_pending }))).into_response())
+}
+
+async fn delete_item(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Path(id): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    let device = auth(&state, &headers, addr.ip())?;
+    // Deleting what is already gone is a success: the client's intent holds.
+    if state.store.delete_item(&device, &id).map_err(internal)? {
+        state.notify();
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn delete_all(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Json<Value>, ApiError> {
+    let device = auth(&state, &headers, addr.ip())?;
+    let removed = state.store.delete_all(&device).map_err(internal)?;
+    if removed > 0 {
+        state.notify();
+    }
+    Ok(Json(json!({ "removed": removed })))
 }
 
 async fn upload_blob(
@@ -417,30 +544,45 @@ async fn upload_blob(
         return Err(e);
     }
     state.store.mark_ready(&id, size as i64).map_err(internal)?;
-    let _ = state.changed.send(());
+    state.notify();
     Ok(StatusCode::NO_CONTENT)
 }
 
 #[derive(Deserialize)]
-struct InboxQuery {
+struct ChangesQuery {
+    #[serde(default)]
+    since: i64,
     #[serde(default)]
     wait: u64,
+    #[serde(default)]
+    limit: Option<i64>,
 }
 
-async fn inbox(
+/// The change feed after `since`. With nothing new, waits up to `wait`
+/// seconds for something to happen. A client behind the compaction floor
+/// gets 409 and must start over from zero.
+async fn changes(
     State(state): State<Arc<AppState>>,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Query(query): Query<InboxQuery>,
+    Query(query): Query<ChangesQuery>,
     headers: HeaderMap,
 ) -> Result<Json<Value>, ApiError> {
-    let device = auth(&state, &headers, addr.ip())?;
-    // Subscribe before reading so mail arriving in between still wakes us.
+    auth(&state, &headers, addr.ip())?;
+    if query.since < 0 {
+        return Err(ApiError(StatusCode::BAD_REQUEST, "since must not be negative"));
+    }
+    let limit = query.limit.unwrap_or(MAX_CHANGES).clamp(1, MAX_CHANGES);
+    // Subscribe before reading so a change arriving in between still wakes us.
     let mut changed = state.changed.subscribe();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(query.wait.min(MAX_WAIT_SECS));
     loop {
-        let items: Vec<InboxItem> = state.store.inbox(&device, 50).map_err(internal)?;
-        if !items.is_empty() || tokio::time::Instant::now() >= deadline {
-            return Ok(Json(json!({ "items": items })));
+        let page = state
+            .store
+            .changes(query.since, limit)
+            .map_err(internal)?
+            .ok_or(ApiError(StatusCode::CONFLICT, "too far behind; sync again from zero"))?;
+        if !page.items.is_empty() || tokio::time::Instant::now() >= deadline {
+            return Ok(Json(serde_json::to_value(page).map_err(internal)?));
         }
         let _ = tokio::time::timeout_at(deadline, changed.recv()).await;
     }
@@ -452,8 +594,8 @@ async fn download_blob(
     Path(id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    let device = auth(&state, &headers, addr.ip())?;
-    let path = state.store.blob_for(&device, &id).ok_or(ApiError(StatusCode::NOT_FOUND, "no such blob"))?;
+    auth(&state, &headers, addr.ip())?;
+    let path = state.store.blob_for(&id).ok_or(ApiError(StatusCode::NOT_FOUND, "no such blob"))?;
     let file = tokio::fs::File::open(&path).await.map_err(internal)?;
     let size = file.metadata().await.map_err(internal)?.len();
     Ok((
@@ -461,17 +603,6 @@ async fn download_blob(
         Body::from_stream(tokio_util::io::ReaderStream::new(file)),
     )
         .into_response())
-}
-
-async fn ack(
-    State(state): State<Arc<AppState>>,
-    ConnectInfo(addr): ConnectInfo<SocketAddr>,
-    Path(id): Path<String>,
-    headers: HeaderMap,
-) -> Result<StatusCode, ApiError> {
-    let device = auth(&state, &headers, addr.ip())?;
-    state.store.ack(&device, &id).map_err(internal)?;
-    Ok(StatusCode::NO_CONTENT)
 }
 
 pub fn router(state: Arc<AppState>) -> Router {
@@ -489,10 +620,13 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/pairings/{nameplate}/join", post(join_pairing))
         .route("/v1/pairings/{nameplate}/answer", post(answer_pairing))
         .route("/v1/pairings/{nameplate}/result", get(pairing_result))
-        .route("/v1/items", post(create_item).layer(DefaultBodyLimit::max(json_limit)))
+        .route("/v1/join-codes", post(create_join_code).delete(cancel_join_code))
+        .route("/v1/join", post(join))
+        .route("/v1/policy", get(policy))
+        .route("/v1/items", delete(delete_all))
+        .route("/v1/items/{id}", put(put_item).delete(delete_item).layer(DefaultBodyLimit::max(json_limit)))
         .route("/v1/items/{id}/blob", put(upload_blob).get(download_blob).layer(DefaultBodyLimit::disable()))
-        .route("/v1/items/{id}/ack", post(ack))
-        .route("/v1/inbox", get(inbox))
+        .route("/v1/changes", get(changes))
         .with_state(state)
 }
 
@@ -512,7 +646,8 @@ mod tests {
     fn fixture() -> Fixture {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
-        let state = AppState::new(store, Limits { max_envelope_bytes: 1024, max_blob_bytes: 16 });
+        let policy = Policy { retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed: false };
+        let state = AppState::new(store, Limits { max_envelope_bytes: 1024, max_blob_bytes: 16 }, policy);
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([203, 0, 113, 7], 1000))));
         Fixture { _dir: dir, app, state }
     }
@@ -574,22 +709,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn text_item_round_trip() {
+    async fn items_are_put_updated_deleted_and_followed_through_changes() {
         let f = fixture();
-        let (_, a) = f.state.store.add_device(b"a").unwrap();
+        let (a_dev, a) = f.state.store.add_device(b"a").unwrap();
         let (_, b) = f.state.store.add_device(b"b").unwrap();
-        let sealed = base64::engine::general_purpose::STANDARD.encode(b"sealed");
+        let sealed = b64(b"sealed");
         let (status, body) =
-            call(&f.app, "POST", "/v1/items", &a, json_body(json!({ "id": ID, "envelope": sealed }))).await;
-        assert_eq!((status, parse(&body)["recipients"].clone()), (201, json!(1)));
-        let (_, body) = call(&f.app, "GET", "/v1/inbox", &b, Body::empty()).await;
-        let items = parse(&body)["items"].clone();
-        assert_eq!(items[0]["id"], ID);
-        assert_eq!(items[0]["from"], f.state.store.list_devices().unwrap()[0].id);
-        assert_eq!(items[0]["envelope"], sealed);
-        assert_eq!(call(&f.app, "POST", &format!("/v1/items/{ID}/ack"), &b, Body::empty()).await.0, 204);
-        let (_, body) = call(&f.app, "GET", "/v1/inbox", &b, Body::empty()).await;
+            call(&f.app, "PUT", &format!("/v1/items/{ID}"), &a, json_body(json!({ "envelope": sealed }))).await;
+        assert_eq!((status, parse(&body)["blob_pending"].clone()), (201, json!(false)));
+        let (_, body) = call(&f.app, "GET", "/v1/changes", &b, Body::empty()).await;
+        let page = parse(&body);
+        assert_eq!(page["items"][0]["id"], ID);
+        assert_eq!(page["items"][0]["origin"], a_dev.id);
+        assert_eq!(page["items"][0]["envelope"], sealed);
+        assert_eq!(page["items"][0]["deleted"], false);
+        assert_eq!((page["next"].clone(), page["more"].clone()), (json!(1), json!(false)));
+
+        let (status, _) =
+            call(&f.app, "PUT", &format!("/v1/items/{ID}"), &b, json_body(json!({ "envelope": b64(b"bumped") }))).await;
+        assert_eq!(status, 200, "updates are fine from any device");
+        let (_, body) = call(&f.app, "GET", "/v1/changes?since=1", &a, Body::empty()).await;
+        assert_eq!(parse(&body)["items"][0]["envelope"], b64(b"bumped"));
+
+        assert_eq!(call(&f.app, "DELETE", &format!("/v1/items/{ID}"), &a, Body::empty()).await.0, 204);
+        assert_eq!(call(&f.app, "DELETE", &format!("/v1/items/{ID}"), &a, Body::empty()).await.0, 204, "idempotent");
+        let (_, body) = call(&f.app, "GET", "/v1/changes?since=2", &b, Body::empty()).await;
+        let tombstone = parse(&body)["items"][0].clone();
+        assert_eq!(tombstone["deleted"], true);
+        assert!(tombstone.get("envelope").is_none());
+        let (status, _) =
+            call(&f.app, "PUT", &format!("/v1/items/{ID}"), &b, json_body(json!({ "envelope": sealed }))).await;
+        assert_eq!(status, 410, "deletions win");
+        let (_, body) = call(&f.app, "GET", "/v1/changes?since=3", &b, Body::empty()).await;
         assert_eq!(parse(&body)["items"], json!([]));
+        assert_eq!(parse(&body)["next"], 3);
     }
 
     #[tokio::test]
@@ -597,50 +750,117 @@ mod tests {
         let f = fixture();
         let (_, a) = f.state.store.add_device(b"a").unwrap();
         let (_, b) = f.state.store.add_device(b"b").unwrap();
-        let sealed = base64::engine::general_purpose::STANDARD.encode(b"meta");
         let blob = format!("/v1/items/{ID}/blob");
-        call(&f.app, "POST", "/v1/items", &a, json_body(json!({ "id": ID, "envelope": sealed, "has_blob": true }))).await;
+        let (status, body) = call(
+            &f.app,
+            "PUT",
+            &format!("/v1/items/{ID}"),
+            &a,
+            json_body(json!({ "envelope": b64(b"meta"), "has_blob": true })),
+        )
+        .await;
+        assert_eq!((status, parse(&body)["blob_pending"].clone()), (201, json!(true)));
+        let (_, body) = call(&f.app, "GET", "/v1/changes", &b, Body::empty()).await;
+        assert_eq!(parse(&body)["items"], json!([]), "not visible yet");
         assert_eq!(call(&f.app, "GET", &blob, &b, Body::empty()).await.0, 404, "not ready yet");
-        assert_eq!(call(&f.app, "PUT", &blob, &b, Body::from("x")).await.0, 404, "only the sender uploads");
+        assert_eq!(call(&f.app, "PUT", &blob, &b, Body::from("x")).await.0, 404, "only the creator uploads");
         assert_eq!(call(&f.app, "PUT", &blob, &a, Body::from(vec![1u8; 17])).await.0, 413);
         assert_eq!(call(&f.app, "PUT", &blob, &a, Body::from("blob bytes")).await.0, 204);
         assert_eq!(call(&f.app, "PUT", &blob, &a, Body::from("again")).await.0, 404, "blobs are write-once");
-        let (_, body) = call(&f.app, "GET", "/v1/inbox", &b, Body::empty()).await;
+        let (_, body) = call(&f.app, "GET", "/v1/changes", &b, Body::empty()).await;
         assert_eq!(parse(&body)["items"][0]["blob_size"], 10);
         assert_eq!(call(&f.app, "GET", &blob, &b, Body::empty()).await, (200, b"blob bytes".to_vec()));
-        assert_eq!(call(&f.app, "GET", &blob, &a, Body::empty()).await.0, 404, "the sender is not a recipient");
+        assert_eq!(call(&f.app, "GET", &blob, &a, Body::empty()).await.0, 200, "the creator may fetch it too");
     }
 
     #[tokio::test]
     async fn invalid_items_are_rejected() {
         let f = fixture();
         let (_, a) = f.state.store.add_device(b"a").unwrap();
-        let ok = base64::engine::general_purpose::STANDARD.encode(b"x");
-        let post = |body: Value| call(&f.app, "POST", "/v1/items", &a, json_body(body));
-        assert_eq!(post(json!({ "id": ID, "envelope": ok })).await.0, 422, "nobody to deliver to");
-        f.state.store.add_device(b"b").unwrap();
-        assert_eq!(post(json!({ "id": "../x", "envelope": ok })).await.0, 400);
-        assert_eq!(post(json!({ "id": ID, "envelope": "not base64!" })).await.0, 400);
-        let big = base64::engine::general_purpose::STANDARD.encode(vec![0u8; 1025]);
-        assert_eq!(post(json!({ "id": ID, "envelope": big })).await.0, 413);
-        assert_eq!(post(json!({ "id": ID, "envelope": ok })).await.0, 201);
-        assert_eq!(post(json!({ "id": ID, "envelope": ok })).await.0, 409);
+        let ok = b64(b"x");
+        let app = &f.app;
+        let a = &a;
+        let put = move |id: String, body: Value| async move {
+            call(app, "PUT", &format!("/v1/items/{id}"), a, json_body(body)).await
+        };
+        assert_eq!(put("..%2Fx".into(), json!({ "envelope": ok })).await.0, 400);
+        assert_eq!(put(ID.into(), json!({ "envelope": "not base64!" })).await.0, 400);
+        let big = b64(&vec![0u8; 1025]);
+        assert_eq!(put(ID.into(), json!({ "envelope": big })).await.0, 413);
+        assert_eq!(put(ID.into(), json!({ "envelope": ok })).await.0, 201);
+        assert_eq!(put(ID.into(), json!({ "envelope": ok, "has_blob": true })).await.0, 409);
+        assert_eq!(call(&f.app, "GET", "/v1/changes?since=-1", &a, Body::empty()).await.0, 400);
     }
 
     #[tokio::test]
-    async fn waiting_inbox_wakes_when_mail_arrives() {
+    async fn waiting_changes_wake_when_something_happens() {
         let f = fixture();
         let (_, a) = f.state.store.add_device(b"a").unwrap();
         let (_, b) = f.state.store.add_device(b"b").unwrap();
         let app = f.app.clone();
-        let waiting = tokio::spawn(async move { call(&app, "GET", "/v1/inbox?wait=10", &b, Body::empty()).await });
+        let waiting = tokio::spawn(async move { call(&app, "GET", "/v1/changes?wait=10", &b, Body::empty()).await });
         tokio::time::sleep(Duration::from_millis(100)).await;
         let started = Instant::now();
-        let sealed = base64::engine::general_purpose::STANDARD.encode(b"sealed");
-        call(&f.app, "POST", "/v1/items", &a, json_body(json!({ "id": ID, "envelope": sealed }))).await;
+        call(&f.app, "PUT", &format!("/v1/items/{ID}"), &a, json_body(json!({ "envelope": b64(b"sealed") }))).await;
         let (_, body) = waiting.await.unwrap();
         assert_eq!(parse(&body)["items"][0]["id"], ID);
         assert!(started.elapsed() < Duration::from_secs(2));
+    }
+
+    #[tokio::test]
+    async fn clients_behind_the_floor_start_over_and_delete_all_clears_the_history() {
+        let f = fixture();
+        let (_, a) = f.state.store.add_device(b"a").unwrap();
+        for n in 1..=3u8 {
+            let id = format!("{n:032x}");
+            call(&f.app, "PUT", &format!("/v1/items/{id}"), &a, json_body(json!({ "envelope": b64(b"x") }))).await;
+        }
+        let (status, body) = call(&f.app, "DELETE", "/v1/items", &a, Body::empty()).await;
+        assert_eq!((status, parse(&body)["removed"].clone()), (200, json!(3)));
+        let (_, body) = call(&f.app, "GET", "/v1/changes", &a, Body::empty()).await;
+        assert!(parse(&body)["items"].as_array().unwrap().iter().all(|c| c["deleted"] == true));
+        f.state.store.compact(crate::store::now_ms() + 8 * 86_400_000, 7 * 86_400_000).unwrap();
+        assert_eq!(call(&f.app, "GET", "/v1/changes?since=2", &a, Body::empty()).await.0, 409);
+        let (status, body) = call(&f.app, "GET", "/v1/changes", &a, Body::empty()).await;
+        assert_eq!((status, parse(&body)["items"].clone()), (200, json!([])));
+        assert_eq!(parse(&body)["next"], 6);
+    }
+
+    #[tokio::test]
+    async fn policy_is_served_to_devices_with_usage() {
+        let f = fixture();
+        let (_, a) = f.state.store.add_device(b"a").unwrap();
+        assert_eq!(call(&f.app, "GET", "/v1/policy", "", Body::empty()).await.0, 401);
+        call(&f.app, "PUT", &format!("/v1/items/{ID}"), &a, json_body(json!({ "envelope": b64(b"abcd") }))).await;
+        let (status, body) = call(&f.app, "GET", "/v1/policy", &a, Body::empty()).await;
+        assert_eq!(status, 200);
+        let policy = parse(&body);
+        assert_eq!(policy["retention_days"], 30);
+        assert_eq!(policy["max_storage_mb"], 1024);
+        assert_eq!(policy["sync_concealed"], false);
+        assert_eq!(policy["usage"], json!({ "items": 1, "bytes": 4 }));
+    }
+
+    #[tokio::test]
+    async fn join_codes_register_a_scanning_device_once() {
+        let f = fixture();
+        let (_, a) = f.state.store.add_device(b"a").unwrap();
+        assert_eq!(call(&f.app, "POST", "/v1/join-codes", "", Body::empty()).await.0, 401);
+        let (status, body) = call(&f.app, "POST", "/v1/join-codes", &a, Body::empty()).await;
+        assert_eq!(status, 201);
+        let code = parse(&body)["code"].as_str().unwrap().to_string();
+        assert_eq!(parse(&body)["expires_in"], 600);
+        let join = |code: &str| call(&f.app, "POST", "/v1/join", "", json_body(json!({ "code": code, "label": b64(b"phone") })));
+        assert_eq!(join("wrong").await.0, 403);
+        let (status, body) = join(&code).await;
+        assert_eq!(status, 201);
+        let token = parse(&body)["token"].as_str().unwrap().to_string();
+        assert_eq!(call(&f.app, "GET", "/v1/me", &token, Body::empty()).await.0, 200);
+        assert_eq!(join(&code).await.0, 403, "single use");
+        let (_, body) = call(&f.app, "POST", "/v1/join-codes", &a, Body::empty()).await;
+        let code = parse(&body)["code"].as_str().unwrap().to_string();
+        assert_eq!(call(&f.app, "DELETE", "/v1/join-codes", &a, Body::empty()).await.0, 204);
+        assert_eq!(join(&code).await.0, 403, "cancelled");
     }
 
     #[tokio::test]

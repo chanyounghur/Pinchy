@@ -1,8 +1,10 @@
 # Pinchy Relay
 
-여러 컴퓨터의 Pinchy가 텍스트, 링크, 이미지, 파일을 주고받을 때 거쳐 가는 중계 서버입니다. 한 기기가 보낸 항목은 연결된 다른 모든 기기의 우편함에 들어가고, 모든 기기가 받아 가면 삭제됩니다. 받지 않은 항목은 7일 뒤 삭제됩니다.
+여러 기기의 Pinchy가 같은 클립보드 히스토리를 쓰게 해 주는 서버입니다. 히스토리의 원본이 여기에 있고, 연결된 모든 기기는 변경 내역을 받아 똑같이 따라갑니다. 한 기기에서 복사하면 다른 모든 기기에 쌓이고, 한 기기에서 지우면 모든 기기에서 지워집니다. 보관 기간과 최대 용량도 서버가 정해 모든 기기에 적용합니다.
 
-내용과 기기 이름은 각 기기의 Pinchy가 기기끼리만 아는 공유 키로 암호화합니다(XChaCha20-Poly1305). 서버는 암호문과 크기만 알고, 공유 키는 서버를 거쳐 가더라도 서버가 풀 수 없는 형태로만 전달됩니다.
+내용과 기기 이름은 각 기기의 Pinchy가 기기끼리만 아는 공유 키로 암호화합니다(XChaCha20-Poly1305). 서버는 암호문, 크기, 변경 시각만 알고, 공유 키는 서버를 거쳐 가더라도 서버가 풀 수 없는 형태로만 전달됩니다.
+
+relay 1.0은 0.x의 우편함 방식과 호환되지 않습니다. 0.x 데이터 폴더로 실행하면 기기 목록은 유지하고 전달 대기 중이던 항목만 지웁니다. Pinchy 데스크톱도 함께 1.0으로 올려야 합니다.
 
 ```bash
 curl https://<도메인>/health
@@ -27,14 +29,20 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 
 | 옵션 | 환경 변수 | 설명 |
 | --- | --- | --- |
-| `--data-dir` | `PINCHY_RELAY_DATA_DIR` | 기기 목록, 우편함, 인증서 저장 위치. 기본값 macOS `~/Library/Application Support/pinchy-relay`, 그 외 `~/.local/share/pinchy-relay` |
+| `--data-dir` | `PINCHY_RELAY_DATA_DIR` | 기기 목록, 히스토리, 인증서 저장 위치. 기본값 macOS `~/Library/Application Support/pinchy-relay`, 그 외 `~/.local/share/pinchy-relay` |
 | `--listen` | `PINCHY_RELAY_LISTEN` | 받는 주소. 기본값 `127.0.0.1:8787` |
 | `--domain` | `PINCHY_RELAY_DOMAIN` | 공개 도메인. 지정하면 HTTPS로 실행 |
 | `--cache-dir` | `PINCHY_RELAY_CACHE_DIR` | 인증서와 ACME 계정 저장 위치. 기본값 데이터 폴더의 `acme` |
 | `--contact` | `PINCHY_RELAY_CONTACT` | Let's Encrypt 만료 알림을 받을 이메일 |
 | `--staging` | `PINCHY_RELAY_STAGING` | Let's Encrypt 테스트 환경 사용 (브라우저가 신뢰하지 않는 인증서) |
-| `--retention-days` | `PINCHY_RELAY_RETENTION_DAYS` | 받아 가지 않은 항목 보관 기간. 기본값 7일 |
-| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 64MB. Pinchy는 파일을 한 번에 50MB까지 보내므로 그보다 크게 두세요 |
+| `--retention-days` | `PINCHY_RELAY_RETENTION_DAYS` | 마지막으로 복사한 뒤 이 기간이 지난 항목을 모든 기기에서 삭제. 기본값 30일 |
+| `--max-storage-mb` | `PINCHY_RELAY_MAX_STORAGE_MB` | 히스토리 최대 용량. 넘으면 오래된 항목부터 삭제. 기본값 1,024MB |
+| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 64MB. Pinchy는 파일을 한 번에 50MB까지 올리므로 그보다 크게 두세요 |
+| `--sync-concealed` | `PINCHY_RELAY_SYNC_CONCEALED` | 비밀번호 관리자처럼 원본 앱이 "숨김"으로 표시한 복사도 동기화. 기본값 꺼짐. 서버는 내용을 볼 수 없으므로 각 기기가 복사 시점에 이 설정을 따릅니다 |
+
+### 보관 정리
+
+서버가 1분마다 보관 기간과 최대 용량을 확인해 넘치는 항목을 지우고, 지운 항목은 모든 기기에 삭제로 전파됩니다. 어떤 기기에서든 같은 내용을 다시 복사하면 그 항목의 보관 기간이 갱신됩니다. 기기는 서버 정책을 따르기만 하므로 기기별 보관 설정은 없습니다. 삭제 기록은 오랫동안 꺼져 있던 기기를 위해 90일 동안 남겨 두고, 그보다 오래 꺼져 있던 기기는 전체를 다시 받습니다.
 
 처음에는 `--staging`과 임시 `--cache-dir`로 발급이 되는지 먼저 확인하세요. 운영 환경은 같은 도메인에서 검증에 여러 번 실패하면 한동안 발급을 막습니다. 인증서 저장 폴더를 유지하면 재시작할 때 다시 발급받지 않습니다.
 
@@ -56,7 +64,7 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 
 ### 초기화
 
-모든 기기를 잃어버렸다면 서버의 기기 목록과 우편함을 지우고 다시 시작합니다. 남은 항목은 어차피 잃어버린 공유 키 없이는 열 수 없습니다. **`acme/` 폴더는 지우지 마세요.** 인증서를 짧은 시간에 여러 번 다시 받으면 Let's Encrypt 발급 제한에 걸립니다.
+모든 기기를 잃어버렸다면 서버의 기기 목록과 히스토리를 지우고 다시 시작합니다. 남은 항목은 어차피 잃어버린 공유 키 없이는 열 수 없습니다. **`acme/` 폴더는 지우지 마세요.** 인증서를 짧은 시간에 여러 번 다시 받으면 Let's Encrypt 발급 제한에 걸립니다.
 
 ```bash
 launchctl bootout gui/$(id -u)/com.chanyounghur.pinchy-relay
@@ -82,11 +90,15 @@ grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log |
 | `GET /v1/pairings/{번호}/result?ticket=` | 없음 | 승인되면 토큰과 봉인한 공유 키를 받음 |
 | `GET /v1/me`, `PUT /v1/me` | 토큰 | 연결된 기기 수 확인, 이 기기의 봉인한 이름(`label`) 변경 |
 | `GET /v1/devices`, `DELETE /v1/devices/{id}` | 토큰 | 기기 목록, 기기 해제 |
-| `POST /v1/items` | 토큰 | `{"id", "envelope", "has_blob"}`. 다른 모든 기기에 전달. `id`는 보내는 기기가 정한 32자 소문자 16진수 |
-| `PUT /v1/items/{id}/blob` | 토큰 | 이미지·파일 본문 업로드. 업로드가 끝나야 받는 기기에 보입니다 |
-| `GET /v1/inbox?wait=25` | 토큰 | 받을 항목 목록. 비어 있으면 최대 `wait`초(최대 30) 기다렸다가 응답 |
+| `POST /v1/join-codes`, `DELETE /v1/join-codes` | 토큰 | QR용 일회용 연결 코드 발급(10분), 취소. 공유 키는 QR에만 들어가고 서버에는 오지 않음 |
+| `POST /v1/join` | 없음 | `{"code", "label"}`. QR 코드로 새 기기를 등록하고 토큰을 받음 |
+| `GET /v1/policy` | 토큰 | 보관 기간, 최대 용량, 파일 크기 제한, 숨김 복사 동기화 여부, 현재 사용량 |
+| `PUT /v1/items/{id}` | 토큰 | `{"envelope", "has_blob"}`. 항목을 만들거나 봉인한 내용을 바꿈. `id`는 기기가 정한 32자 소문자 16진수. 지워진 항목은 410 |
+| `PUT /v1/items/{id}/blob` | 토큰 | 이미지·파일 본문 업로드. 만든 기기만, 한 번만. 업로드가 끝나야 다른 기기에 보입니다 |
 | `GET /v1/items/{id}/blob` | 토큰 | 이미지·파일 본문 다운로드 |
-| `POST /v1/items/{id}/ack` | 토큰 | 받았음을 알림. 모든 기기가 받으면 서버에서 삭제 |
+| `DELETE /v1/items/{id}` | 토큰 | 항목을 모든 기기에서 삭제 |
+| `DELETE /v1/items` | 토큰 | 히스토리 전체 삭제 |
+| `GET /v1/changes?since=0&wait=25&limit=200` | 토큰 | `since` 이후 바뀐 항목(삭제 포함)을 순서대로. 응답의 `next`를 다음 `since`로 쓰고, `more`가 참이면 바로 이어서 요청. 비어 있으면 최대 `wait`초(최대 30) 기다림. `since`가 너무 오래됐으면 409이며 0부터 다시 받아야 함 |
 
 ## macOS 상시 실행
 

@@ -11,6 +11,11 @@
 //! so a guessing attacker gets one try per code. The joiner's name reaches
 //! the inviter sealed under the SPAKE2 key; the inviter re-seals it with the
 //! sharing key as the label the relay stores.
+//!
+//! A connected device can also mint a *join code*: a one-time secret it
+//! shows in a QR code together with the sharing key, for a device that can
+//! scan but not type (a phone). The relay never sees the key; the code only
+//! lets the scanner register itself within `JOIN_CODE_TTL`.
 
 use crate::store::random_hex;
 use std::collections::HashMap;
@@ -20,6 +25,7 @@ use std::time::{Duration, Instant};
 pub const PAIRING_TTL: Duration = Duration::from_secs(600);
 pub const FIRST_CODE_TTL: Duration = Duration::from_secs(1800);
 pub const MAX_FIRST_CODE_FAILURES: u32 = 5;
+pub const JOIN_CODE_TTL: Duration = Duration::from_secs(600);
 
 struct FirstCode {
     code: String,
@@ -63,10 +69,16 @@ pub enum PairingError {
     Refused,
 }
 
+struct JoinCode {
+    owner: String,
+    created: Instant,
+}
+
 #[derive(Default)]
 pub struct Joining {
     first: Mutex<Option<FirstCode>>,
     pairings: Mutex<HashMap<String, Pairing>>,
+    codes: Mutex<HashMap<String, JoinCode>>,
 }
 
 /// `n` random decimal digits.
@@ -232,6 +244,33 @@ impl Joining {
             pairings.remove(nameplate);
         }
     }
+
+    /// Mints a join code for `owner`, replacing any earlier one it had.
+    pub fn create_join_code(&self, owner: &str) -> String {
+        let mut codes = self.codes.lock().unwrap();
+        codes.retain(|_, c| c.created.elapsed() < JOIN_CODE_TTL && c.owner != owner);
+        let code = random_hex(16);
+        codes.insert(code.clone(), JoinCode { owner: owner.into(), created: Instant::now() });
+        code
+    }
+
+    /// Consumes a join code if it is valid.
+    pub fn take_join_code(&self, code: &str) -> bool {
+        let mut codes = self.codes.lock().unwrap();
+        codes.retain(|_, c| c.created.elapsed() < JOIN_CODE_TTL);
+        let found = codes.keys().find(|k| same(k, code)).cloned();
+        match found {
+            Some(key) => {
+                codes.remove(&key);
+                true
+            }
+            None => false,
+        }
+    }
+
+    pub fn cancel_join_code(&self, owner: &str) {
+        self.codes.lock().unwrap().retain(|_, c| c.owner != owner);
+    }
 }
 
 #[cfg(test)]
@@ -291,6 +330,24 @@ mod tests {
         let approved = joining.result(&np, &ticket).unwrap().unwrap();
         assert_eq!((approved.token.as_str(), approved.payload.as_slice()), ("pr1_t", &b"sealed key"[..]));
         assert_eq!(joining.result(&np, &ticket).err(), Some(PairingError::Gone), "read once");
+    }
+
+    #[test]
+    fn join_codes_are_single_use_and_one_per_owner() {
+        let joining = Joining::default();
+        let first = joining.create_join_code("owner");
+        let second = joining.create_join_code("owner");
+        assert_eq!(first.len(), 32);
+        assert!(!joining.take_join_code(&first), "replaced by the newer code");
+        assert!(!joining.take_join_code("nope"));
+        assert!(joining.take_join_code(&second));
+        assert!(!joining.take_join_code(&second), "used up");
+        let third = joining.create_join_code("owner");
+        joining.cancel_join_code("someone else");
+        assert!(joining.take_join_code(&third));
+        let fourth = joining.create_join_code("owner");
+        joining.cancel_join_code("owner");
+        assert!(!joining.take_join_code(&fourth));
     }
 
     #[test]

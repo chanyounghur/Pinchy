@@ -1,9 +1,10 @@
-//! Pinchy relay: a mailbox server that Pinchy clients reach over HTTPS.
+//! Pinchy relay: the server that holds the shared clipboard history.
 //!
 //! The first device joins with a code the relay prints while it has no
-//! devices; later devices are invited by connected ones (see `pairing`). An
-//! item sent by one device is queued for every other device until each has
-//! acknowledged it or it expires. Contents are encrypted by the clients.
+//! devices; later devices are invited by connected ones (see `pairing`).
+//! Every device mirrors the history kept here through a change feed; the
+//! relay applies the retention policy for all of them. Contents are
+//! encrypted by the clients.
 
 mod api;
 mod pairing;
@@ -17,6 +18,8 @@ use tokio_stream::StreamExt;
 const DAY_MS: i64 = 86_400_000;
 /// Blob items whose upload has not finished by then are dropped.
 const STALE_UPLOAD_MS: i64 = 3_600_000;
+/// How long a deletion is remembered for devices that were offline.
+const TOMBSTONE_DAYS: i64 = 90;
 
 #[derive(Parser, Debug)]
 #[command(version, about = "Pinchy relay server")]
@@ -50,13 +53,23 @@ struct Args {
     #[arg(long, env = "PINCHY_RELAY_STAGING")]
     staging: bool,
 
-    /// Days an undelivered item is kept.
-    #[arg(long, env = "PINCHY_RELAY_RETENTION_DAYS", default_value_t = 7)]
+    /// Days an item is kept after it was last copied, on every device.
+    #[arg(long, env = "PINCHY_RELAY_RETENTION_DAYS", default_value_t = 30)]
     retention_days: u32,
+
+    /// Largest total history, in megabytes; the oldest items go first.
+    #[arg(long, env = "PINCHY_RELAY_MAX_STORAGE_MB", default_value_t = 1024)]
+    max_storage_mb: u64,
 
     /// Largest accepted image or file, in megabytes.
     #[arg(long, env = "PINCHY_RELAY_MAX_BLOB_MB", default_value_t = 64)]
     max_blob_mb: u64,
+
+    /// Also sync copies that the source app marked as concealed, such as
+    /// passwords from a password manager. Off by default; the devices
+    /// enforce it, since the relay cannot read what it stores.
+    #[arg(long, env = "PINCHY_RELAY_SYNC_CONCEALED")]
+    sync_concealed: bool,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -79,24 +92,43 @@ fn open_store(data_dir: &PathBuf) -> store::Store {
 async fn main() {
     let args = Args::parse();
 
+    if args.retention_days == 0 || args.max_storage_mb == 0 {
+        eprintln!("[pinchy-relay] --retention-days and --max-storage-mb must be at least 1");
+        std::process::exit(2);
+    }
     let state = api::AppState::new(
         open_store(&args.data_dir),
         api::Limits { max_envelope_bytes: 8 * 1024 * 1024, max_blob_bytes: args.max_blob_mb * 1024 * 1024 },
+        api::Policy {
+            retention_days: args.retention_days,
+            max_storage_mb: args.max_storage_mb,
+            max_blob_mb: args.max_blob_mb,
+            sync_concealed: args.sync_concealed,
+        },
     );
+    if args.sync_concealed {
+        eprintln!("[pinchy-relay] concealed copies (password managers) are synced");
+    }
     let retention_ms = i64::from(args.retention_days) * DAY_MS;
+    let max_bytes = (args.max_storage_mb * 1024 * 1024) as i64;
     let maintaining = state.clone();
     tokio::spawn(async move {
         let mut tick = tokio::time::interval(Duration::from_secs(60));
-        for minute in 0u64.. {
+        loop {
             tick.tick().await;
             maintaining.announce_first_code();
-            if minute % 10 != 0 {
-                continue;
-            }
-            match maintaining.store.purge(store::now_ms(), retention_ms, STALE_UPLOAD_MS) {
+            match maintaining.store.purge(store::now_ms(), retention_ms, max_bytes, STALE_UPLOAD_MS) {
                 Ok(0) => {}
-                Ok(n) => eprintln!("[pinchy-relay] removed {n} expired item(s)"),
+                Ok(n) => {
+                    eprintln!("[pinchy-relay] removed {n} item(s) by the retention policy");
+                    maintaining.notify();
+                }
                 Err(e) => eprintln!("[pinchy-relay] purge failed: {e}"),
+            }
+            match maintaining.store.compact(store::now_ms(), TOMBSTONE_DAYS * DAY_MS) {
+                Ok(0) => {}
+                Ok(n) => eprintln!("[pinchy-relay] forgot {n} old deletion(s)"),
+                Err(e) => eprintln!("[pinchy-relay] compaction failed: {e}"),
             }
         }
     });
