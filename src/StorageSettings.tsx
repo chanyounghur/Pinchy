@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke, listen } from "./tauri";
+import type { Policy, Status } from "./ShareSettings";
 
 type Retention = { days_enabled: boolean; days: number; size_enabled: boolean; max_mb: number };
 type Usage = { bytes: number; count: number };
@@ -23,6 +24,7 @@ export default function StorageSettings() {
   const [confirm, setConfirm] = useState<"save" | "clear" | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [message, setMessage] = useState("");
+  const [policy, setPolicy] = useState<Policy | null>(null);
   const pending = useRef(false);
 
   useEffect(() => {
@@ -47,6 +49,12 @@ export default function StorageSettings() {
     };
     void load().catch((e) => { if (!disposed) setError(String(e)); });
     void refresh();
+    const applyStatus = (status: Status) => setPolicy(status.state === "connected" ? status.policy : null);
+    void invoke<Status>("share_status").then((status) => { if (!disposed) applyStatus(status); }).catch(() => {});
+    void (async () => {
+      const stop = await listen<Status>("share-status", ({ payload }) => { if (!disposed) applyStatus(payload); });
+      if (disposed) stop(); else stops.push(stop);
+    })().catch(() => {});
     void (async () => {
       for (const [name, handler] of [
         ["clipboard-changed", () => {
@@ -116,6 +124,39 @@ export default function StorageSettings() {
     }
   };
 
+  const clearButton = <button className="danger" disabled={busy || !usage || usage.count === 0}
+    onClick={() => { setMessage(""); setConfirm("clear"); }}>히스토리 제거</button>;
+  const clearConfirm = confirm === "clear" && <div className="storage-confirm" role="group" aria-label="히스토리 제거 확인">
+    <p>{`기록 ${usage?.count.toLocaleString() ?? "전체"}개와 저장된 이미지·미리보기를 모두 제거할까요? 복사했던 원본 파일은 유지됩니다.`}{policy ? " 연결된 다른 기기의 히스토리도 함께 지워져요." : ""}</p>
+    <p>삭제한 기록은 되돌릴 수 없습니다.</p>
+    <div className="row"><button className="primary" disabled={busy} onClick={() => void run("clear")}>
+      {busy ? "처리 중…" : "모두 제거"}
+    </button><button disabled={busy} onClick={() => setConfirm(null)}>취소</button></div>
+  </div>;
+
+  if (policy) {
+    return <section className="storage" aria-labelledby="storage-heading">
+      <h1 id="storage-heading">히스토리 보관</h1>
+      <div className="storage-usage" aria-live="polite">
+        <span>이 기기 사용량</span>
+        <strong>{usage ? formatBytes(usage.bytes) : "확인 중…"}</strong>
+        <span className="hint">{usage ? `기록 ${usage.count.toLocaleString()}개` : ""}</span>
+      </div>
+      <div className="share-summary storage-policy">
+        <div><span>보관 기간</span><strong>{policy.retention_days.toLocaleString()}일</strong></div>
+        <div><span>최대 용량</span><strong>{policy.max_storage_mb.toLocaleString()}MB</strong></div>
+        <div><span>서버 사용량</span><strong>{policy.usage ? `${formatBytes(policy.usage.bytes)} · 기록 ${policy.usage.items.toLocaleString()}개` : "확인 중…"}</strong></div>
+        <div><span>비밀번호 관리자 복사</span><strong>{policy.sync_concealed ? "동기화함" : "이 기기에만 보관"}</strong></div>
+      </div>
+      <p className="note">기기 간 동기화에 연결된 동안은 서버의 보관 정책을 따릅니다. 마지막 복사 시점부터 보관 기간이 지났거나 최대 용량을 넘으면 서버가 오래된 기록부터 모든 기기에서 지웁니다. 서버를 실행할 때 옵션으로 바꿀 수 있어요.</p>
+      <div className="row storage-actions">{clearButton}</div>
+      {clearConfirm}
+      {busy && !confirm && <p className="note" role="status">처리 중…</p>}
+      {message && <p className="storage-message" role="status">{message}</p>}
+      {error && <p className="update-error" role="alert">{error}</p>}
+    </section>;
+  }
+
   return <section className="storage" aria-labelledby="storage-heading">
     <h1 id="storage-heading">히스토리 보관</h1>
     <div className="storage-usage" aria-live="polite">
@@ -139,22 +180,20 @@ export default function StorageSettings() {
           onChange={(e) => { setMaxMb(e.target.value); resetNotice(); }} /><span>MB</span></div>
       </div>
     </fieldset>
-    <p className="note">선택한 조건 중 하나라도 초과하면 오래된 기록부터 정리합니다. 둘 다 끄면 자동으로 삭제하지 않습니다.</p>
+    <p className="note">선택한 조건 중 하나라도 초과하면 오래된 기록부터 정리합니다. 둘 다 끄면 자동으로 삭제하지 않습니다. 기기 간 동기화에 연결하면 이 설정 대신 서버의 보관 정책을 따릅니다.</p>
     <p className="note storage-detail">기간은 마지막 복사 시점 기준이며, 실행 중 1분마다 확인합니다. 용량은 기록·이미지·미리보기·앱 캐시를 포함합니다. 1,024MB = 1GB.</p>
     {!valid && <p className="update-error" role="alert">기간은 1~36,500일, 용량은 1~1,048,576MB 사이의 정수로 입력해 주세요.</p>}
     <div className="row storage-actions">
       <button className="primary" disabled={busy || !saved || !changed || !valid}
         onClick={() => { setMessage(""); if (daysEnabled || sizeEnabled) setConfirm("save"); else void run("save"); }}>설정 저장</button>
-      <button className="danger" disabled={busy || !usage || usage.count === 0}
-        onClick={() => { setMessage(""); setConfirm("clear"); }}>히스토리 제거</button>
+      {clearButton}
     </div>
-    {confirm && <div className="storage-confirm" role="group" aria-label={confirm === "clear" ? "히스토리 제거 확인" : "보관 설정 적용 확인"}>
-      <p>{confirm === "clear"
-        ? `기록 ${usage?.count.toLocaleString() ?? "전체"}개와 저장된 이미지·미리보기를 모두 제거할까요? 복사했던 원본 파일은 유지됩니다.`
-        : `${[daysEnabled ? `${days}일이 지난 기록` : "", sizeEnabled ? `${maxMb}MB를 초과하는 오래된 기록` : ""].filter(Boolean).join(" 또는 ")}을 지금부터 자동으로 삭제합니다.`}</p>
+    {clearConfirm}
+    {confirm === "save" && <div className="storage-confirm" role="group" aria-label="보관 설정 적용 확인">
+      <p>{`${[daysEnabled ? `${days}일이 지난 기록` : "", sizeEnabled ? `${maxMb}MB를 초과하는 오래된 기록` : ""].filter(Boolean).join(" 또는 ")}을 지금부터 자동으로 삭제합니다.`}</p>
       <p>삭제한 기록은 되돌릴 수 없습니다.</p>
-      <div className="row"><button className="primary" disabled={busy} onClick={() => void run(confirm)}>
-        {busy ? "처리 중…" : confirm === "clear" ? "모두 제거" : "적용하고 정리"}
+      <div className="row"><button className="primary" disabled={busy} onClick={() => void run("save")}>
+        {busy ? "처리 중…" : "적용하고 정리"}
       </button><button disabled={busy} onClick={() => setConfirm(null)}>취소</button></div>
     </div>}
     {busy && !confirm && <p className="note" role="status">처리 중…</p>}

@@ -31,6 +31,7 @@ chacha20poly1305 = "0.10"
 base64 = "0.22"
 spake2 = "0.4"
 keyring = { version = "3", features = ["apple-native", "windows-native"] }
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"

@@ -130,20 +130,6 @@ body,
   color: var(--muted);
   font-size: 13px;
 }
-.toast {
-  max-width: 420px;
-  margin-right: 12px;
-  padding: 4px 10px;
-  border-radius: 7px;
-  background: var(--chip);
-  color: var(--fg);
-  font-size: 12px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.toast.err { color: #d64545; }
-@media (prefers-color-scheme: dark) { .toast.err { color: #ff9585; } }
 
 /* ---- cards ---- */
 .list {
@@ -308,3 +294,7 @@ body,
   color: #c64735; font-weight: 600;
 }
 @media (prefers-color-scheme: dark) { .card-foot .origin { color: #ff9585; } }
+.card-foot .concealed {
+  margin-right: auto; padding: 0 6px; border-radius: 6px;
+  background: var(--chip); color: var(--card-muted); font-size: 10px; font-weight: 600;
+}

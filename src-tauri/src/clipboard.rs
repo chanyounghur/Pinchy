@@ -10,12 +10,14 @@ use clipboard_rs::{
 use clipboard_rs::common::RustImage;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const CHANGED_EVENT: &str = "clipboard-changed";
 pub const PREVIEW_LEN: usize = 300;
+/// Pasteboard types password managers add so clipboard tools leave the copy
+/// alone: macOS's shared convention and Windows' documented flag.
+const CONCEALED_FORMATS: [&str; 2] = ["org.nspasteboard.ConcealedType", "ExcludeClipboardContentFromMonitorProcessing"];
 
 struct Handler {
     app: AppHandle,
@@ -29,18 +31,6 @@ struct Source {
     look: AppLook,
 }
 
-/// When Pinchy itself last put something on the clipboard, so the change it
-/// causes is not mistaken for a new copy.
-static OWN_WRITE: Mutex<Option<Instant>> = Mutex::new(None);
-const OWN_WRITE_WINDOW: Duration = Duration::from_secs(2);
-
-pub fn mark_own_write() {
-    *OWN_WRITE.lock().unwrap() = Some(Instant::now());
-}
-
-fn written_by_pinchy() -> bool {
-    OWN_WRITE.lock().unwrap().is_some_and(|at| at.elapsed() < OWN_WRITE_WINDOW)
-}
 
 impl ClipboardHandler for Handler {
     fn on_clipboard_change(&mut self) {
@@ -48,13 +38,12 @@ impl ClipboardHandler for Handler {
         let db = app.state::<Db>();
         let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
-            let hash = item.hash.clone();
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
-                    if !written_by_pinchy() {
-                        crate::share::copied(&app, &hash);
-                    }
+                    // Pinchy's own paste only bumps an item it already
+                    // synced; the bump still reaches the other devices.
+                    crate::share::changed(&app);
                 }
                 Err(e) => eprintln!("[pinchy] db upsert failed: {e}"),
             }
@@ -81,7 +70,16 @@ impl Handler {
         item.source_app = source.name;
         item.app_icon = source.look.icon;
         item.app_color = source.look.color;
+        item.concealed = self.concealed();
         Some(item)
+    }
+
+    /// Whether the source app asked clipboard tools not to keep this copy.
+    fn concealed(&self) -> bool {
+        self.ctx
+            .available_formats()
+            .map(|formats| formats.iter().any(|f| CONCEALED_FORMATS.contains(&f.as_str())))
+            .unwrap_or(false)
     }
 
     fn read_content(&self) -> Option<NewItem> {
@@ -135,6 +133,7 @@ pub fn png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32) -> Option<NewIt
         height: Some(h as i64),
         size: bytes.len() as i64,
         origin_device: None,
+        concealed: false,
     })
 }
 
@@ -154,6 +153,7 @@ pub fn text_item(text: String) -> NewItem {
         width: None,
         height: None,
         origin_device: None,
+        concealed: false,
     }
 }
 
@@ -206,6 +206,7 @@ fn files_item(files: Vec<String>) -> NewItem {
         width: None,
         height: None,
         origin_device: None,
+        concealed: false,
     }
 }
 

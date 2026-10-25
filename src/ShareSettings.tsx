@@ -1,19 +1,26 @@
 import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 import { invoke, listen } from "./tauri";
 
-type ShareConfig = { name: string; server: string; device_id: string; auto_send: boolean };
-type Status =
+type ShareConfig = { name: string; server: string; device_id: string };
+export type Policy = {
+  retention_days: number;
+  max_storage_mb: number;
+  max_blob_mb: number;
+  sync_concealed: boolean;
+  usage: { items: number; bytes: number } | null;
+};
+export type Status =
   | { state: "off" }
   | { state: "connecting" }
-  | { state: "connected"; devices: number }
+  | { state: "connected"; devices: number; policy: Policy }
   | { state: "error"; message: string };
 type Device = { id: string; name: string; created_at: number; last_seen: number | null; me: boolean };
 type InviteEvent =
   | { state: "joined"; name: string }
   | { state: "failed"; message: string }
   | { state: "expired" };
+type PhoneInvite = { link: string; svg: string; expires_in: number };
 
-const IS_MAC = navigator.platform.startsWith("Mac");
 const INVITE_SECONDS = 600;
 
 function statusText(status: Status | null) {
@@ -30,6 +37,10 @@ function lastSeen(ms: number | null) {
   if (m < 60) return `${m}분 전 접속`;
   if (m < 1440) return `${Math.floor(m / 60)}시간 전 접속`;
   return `${Math.floor(m / 1440)}일 전 접속`;
+}
+
+function countdown(left: number) {
+  return `${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, "0")}초`;
 }
 
 function Invite({ onClose, onJoined }: { onClose: () => void; onJoined: () => void }) {
@@ -66,13 +77,45 @@ function Invite({ onClose, onJoined }: { onClose: () => void; onJoined: () => vo
     return () => clearInterval(timer);
   }, [code, result]);
 
-  return <div className="share-invite" role="group" aria-label="기기 추가">
+  return <div className="share-invite" role="group" aria-label="컴퓨터 추가">
     {result ? <p className={result.kind === "ok" ? "storage-message" : "update-error"} role="status">{result.text}</p> : <>
-      <p>새 기기의 Pinchy 설정에서 서버 주소와 아래 코드를 입력하세요.</p>
+      <p>새 컴퓨터의 Pinchy 설정에서 서버 주소와 아래 코드를 입력하세요.</p>
       <div className="share-code" aria-live="polite">{code ?? "코드 만드는 중…"}</div>
-      <p className="hint">{code ? `${Math.floor(left / 60)}분 ${String(left % 60).padStart(2, "0")}초 안에 입력하세요. 한 번만 쓸 수 있어요.` : ""}</p>
+      <p className="hint">{code ? `${countdown(left)} 안에 입력하세요. 한 번만 쓸 수 있어요.` : ""}</p>
     </>}
     <div className="row"><button onClick={onClose}>{result ? "닫기" : "취소"}</button></div>
+  </div>;
+}
+
+function PhoneInviteView({ onClose }: { onClose: () => void }) {
+  const [invite, setInvite] = useState<PhoneInvite | null>(null);
+  const [left, setLeft] = useState(INVITE_SECONDS);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    void invoke<PhoneInvite>("start_phone_invite")
+      .then((next) => { if (!disposed) { setInvite(next); setLeft(next.expires_in); } })
+      .catch((e) => { if (!disposed) setError(String(e)); });
+    return () => { disposed = true; void invoke("cancel_phone_invite"); };
+  }, []);
+
+  useEffect(() => {
+    if (!invite) return;
+    const started = Date.now();
+    const timer = setInterval(() => setLeft(Math.max(0, invite.expires_in - Math.floor((Date.now() - started) / 1000))), 1000);
+    return () => clearInterval(timer);
+  }, [invite]);
+
+  const expired = invite !== null && left === 0;
+  return <div className="share-invite" role="group" aria-label="휴대폰 추가">
+    {error ? <p className="update-error" role="alert">{error}</p> : <>
+      <p>휴대폰 카메라로 아래 QR 코드를 찍으세요. 서버 주소, 일회용 연결 코드, 공유 키가 들어 있으니 다른 사람에게 보이지 않게 하세요.</p>
+      <div className={`share-qr ${expired ? "expired" : ""}`} aria-label="연결 QR 코드"
+        dangerouslySetInnerHTML={{ __html: invite?.svg ?? "" }} />
+      <p className="hint">{!invite ? "QR 코드 만드는 중…" : expired ? "코드가 만료됐어요. 닫고 다시 열어 주세요." : `${countdown(left)} 안에 찍으세요. 한 번만 쓸 수 있어요.`}</p>
+    </>}
+    <div className="row"><button onClick={onClose}>{expired || error ? "닫기" : "취소"}</button></div>
   </div>;
 }
 
@@ -83,7 +126,7 @@ export default function ShareSettings() {
   const [devices, setDevices] = useState<Device[] | null>(null);
   const [form, setForm] = useState({ name: "", server: "", code: "" });
   const [name, setName] = useState("");
-  const [inviting, setInviting] = useState(false);
+  const [inviting, setInviting] = useState<"computer" | "phone" | null>(null);
   const [confirmLeave, setConfirmLeave] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -137,7 +180,7 @@ export default function ShareSettings() {
     setSaved(settings.share);
     setName(settings.share?.name ?? "");
     setForm((f) => ({ ...f, code: "" }));
-    setMessage("연결했어요.");
+    setMessage("연결했어요. 다른 기기의 히스토리를 받아오고 이 기기의 히스토리를 올리는 중이에요.");
   });
   const rename = () => run(async () => {
     const next = await invoke<string>("set_share_name", { name });
@@ -156,16 +199,10 @@ export default function ShareSettings() {
     setSaved(null);
     setDevices(null);
     setConfirmLeave(false);
-    setInviting(false);
+    setInviting(null);
     setStatus({ state: "off" });
     if (warning) setError(warning);
-    else setMessage("이 기기의 연결을 해제했어요.");
-  });
-  const toggleAuto = () => run(async () => {
-    if (!saved) return;
-    const enabled = await invoke<boolean>("set_share_auto", { enabled: !saved.auto_send });
-    setSaved({ ...saved, auto_send: enabled });
-    setMessage(enabled ? "이제 새로 복사한 항목을 다른 기기로 자동으로 보내요." : "자동 보내기를 껐어요.");
+    else setMessage("이 기기의 연결을 해제했어요. 지금까지의 히스토리는 이 기기에 그대로 남아요.");
   });
   const onJoined = useCallback(() => { void loadDevices(); }, [loadDevices]);
 
@@ -179,7 +216,7 @@ export default function ShareSettings() {
   });
 
   return <section className="share" aria-labelledby="share-heading">
-    <h1 id="share-heading">기기 간 공유 <small className={`share-state ${status?.state ?? ""}`}>{statusText(status)}</small></h1>
+    <h1 id="share-heading">기기 간 동기화 <small className={`share-state ${status?.state ?? ""}`}>{statusText(status)}</small></h1>
     {connected && saved ? <>
       <label className="share-name">이 기기 이름
         <span className="share-key-row">
@@ -191,12 +228,7 @@ export default function ShareSettings() {
       <div className="share-summary">
         <div><span>서버</span><strong>{saved.server.replace(/^https?:\/\//, "")}</strong></div>
       </div>
-      <div className="startup-row share-auto">
-        <label htmlFor="share-auto">새로 복사한 항목 자동으로 보내기</label>
-        <input id="share-auto" className="switch" type="checkbox" role="switch" checked={saved.auto_send}
-          disabled={busy} onChange={() => void toggleAuto()} aria-describedby="share-auto-note" />
-      </div>
-      <p className="note" id="share-auto-note">이 기기에서 텍스트, 링크, 이미지, 파일을 복사하면 바로 연결된 다른 기기로 보냅니다. 비밀번호도 그대로 보내요. 파일은 합쳐서 50MB까지만 보내고, 폴더는 보내지 않아요. 기기마다 따로 켜고 끕니다.</p>
+      <p className="note">연결된 모든 기기가 같은 히스토리를 가져요. 어느 기기에서 복사하든 모두에 쌓이고, 지우면 모두에서 지워져요. 파일은 합쳐서 50MB까지만 올라가고, 폴더와 더 큰 파일은 이 기기에만 남아요.</p>
       {status?.state === "error" && <p className="update-error" role="alert">{status.message}</p>}
       <ul className="share-devices" aria-label="연결된 기기">
         {(devices ?? []).map((d) => <li key={d.id}>
@@ -205,18 +237,19 @@ export default function ShareSettings() {
         </li>)}
         {devices === null && <li className="hint">기기 목록을 불러오는 중…</li>}
       </ul>
-      {inviting
-        ? <Invite onClose={() => setInviting(false)} onJoined={onJoined} />
+      {inviting === "computer" ? <Invite onClose={() => setInviting(null)} onJoined={onJoined} />
+        : inviting === "phone" ? <PhoneInviteView onClose={() => { setInviting(null); void loadDevices(); }} />
         : <div className="row">
-          <button className="primary" disabled={busy} onClick={() => { setMessage(""); setError(null); setInviting(true); }}>기기 추가</button>
+          <button className="primary" disabled={busy} onClick={() => { setMessage(""); setError(null); setInviting("computer"); }}>컴퓨터 추가</button>
+          <button disabled={busy} onClick={() => { setMessage(""); setError(null); setInviting("phone"); }}>휴대폰 추가</button>
           <button className="danger" disabled={busy} onClick={() => setConfirmLeave(true)}>이 기기 연결 해제</button>
         </div>}
       {confirmLeave && <div className="storage-confirm" role="group" aria-label="연결 해제 확인">
-        <p>이 기기의 연결을 해제할까요? 다시 연결하려면 다른 기기에서 새 코드를 받아야 해요. 마지막 기기라면 서버 로그에 새 첫 연결 코드가 나와요.</p>
+        <p>이 기기의 연결을 해제할까요? 히스토리는 이 기기에 남지만 더는 다른 기기와 맞춰지지 않아요. 다시 연결하려면 다른 기기에서 새 코드를 받아야 하고, 마지막 기기라면 서버 로그에 새 첫 연결 코드가 나와요.</p>
         <div className="row"><button className="primary" disabled={busy} onClick={() => void leave()}>{busy ? "해제 중…" : "연결 해제"}</button>
           <button disabled={busy} onClick={() => setConfirmLeave(false)}>취소</button></div>
       </div>}
-      <p className="note">패널에서 항목을 고르고 {IS_MAC ? "⇧↩" : "Shift+Enter"}를 누르면 연결된 다른 기기로 보냅니다. 내용과 기기 이름은 기기끼리만 아는 키로 암호화되어 서버는 읽을 수 없습니다.</p>
+      <p className="note">내용과 기기 이름은 기기끼리만 아는 키로 암호화되어 서버는 읽을 수 없습니다. 비밀번호 관리자에서 복사한 내용은 서버 설정에서 허용하지 않으면 이 기기에만 남아요.</p>
     </> : <fieldset className="share-fields" disabled={busy || !loaded}>
       <label>이 기기 이름<input maxLength={64} placeholder="다른 기기에 표시될 이름" autoComplete="off" spellCheck={false} {...field("name")} /></label>
       <label>서버 주소<input type="url" placeholder="https://example.iptime.org" autoComplete="off" spellCheck={false} {...field("server")} /></label>
@@ -224,7 +257,7 @@ export default function ShareSettings() {
       <div className="row">
         <button className="primary" disabled={!form.server.trim() || !form.code.trim()} onClick={() => void join()}>{busy ? "연결 중…" : "연결"}</button>
       </div>
-      <p className="note">이미 연결된 기기의 설정에서 <b>기기 추가</b>를 누르면 코드가 나옵니다. 처음 연결하는 기기라면 서버를 처음 실행할 때 로그에 나온 첫 연결 코드(예: 1234-5678-9012)를 입력하세요.</p>
+      <p className="note">이미 연결된 기기의 설정에서 <b>컴퓨터 추가</b>를 누르면 코드가 나옵니다. 처음 연결하는 기기라면 서버를 처음 실행할 때 로그에 나온 첫 연결 코드(예: 1234-5678-9012)를 입력하세요. 연결하면 서버의 히스토리를 받아오고 이 기기의 히스토리도 올라가 모든 기기가 같아져요.</p>
     </fieldset>}
     {message && <p className="storage-message" role="status">{message}</p>}
     {error && <p className="update-error" role="alert">{error}</p>}

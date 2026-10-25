@@ -112,12 +112,15 @@ fn copy_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
 fn delete_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
     db.delete(id).map_err(|e| e.to_string())?;
     let _ = app.emit(clipboard::CHANGED_EVENT, ());
+    share::changed(&app);
     Ok(())
 }
 
+/// Clears the history here and, when connected, on every other device.
 #[tauri::command]
 async fn clear_history(app: AppHandle) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || {
+        share::clear_remote(&app)?;
         let result = storage::clear(&app.state::<Db>());
         let _ = app.emit(clipboard::CHANGED_EVENT, ());
         result
@@ -170,7 +173,7 @@ pub fn run() {
             }
 
             link_preview::start(app.handle().clone(), images_dir.clone());
-            share::start(app.handle().clone(), images_dir.clone(), data_dir.join("files"));
+            share::start(app.handle().clone(), images_dir.clone(), data_dir.join("files"), icons_dir.clone());
             clipboard::start(app.handle().clone(), images_dir, icons_dir);
             storage::start(app.handle().clone());
             panel::init(app.handle());
@@ -262,12 +265,12 @@ pub fn run() {
             share::join_share,
             share::start_invite,
             share::cancel_invite,
+            share::start_phone_invite,
+            share::cancel_phone_invite,
             share::share_devices,
             share::remove_share_device,
             share::disconnect_share,
             share::set_share_name,
-            share::set_share_auto,
-            share::send_item,
             updater::update_status,
             updater::check_update,
             updater::install_update

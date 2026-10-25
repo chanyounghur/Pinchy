@@ -14,7 +14,7 @@ pub const DEFAULT_SHORTCUT: &str = "Super+Alt+V";
 pub struct Settings {
     pub shortcut: String,
     pub retention: Retention,
-    /// Relay connection for sharing with other devices; `None` when off.
+    /// Relay connection that keeps the history in sync; `None` when off.
     pub share: Option<ShareConfig>,
 }
 
@@ -22,12 +22,10 @@ pub struct Settings {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShareConfig {
-    /// Shown on the other devices next to what this device sends.
+    /// Shown on the other devices next to what this device copied.
     pub name: String,
     pub server: String,
     pub device_id: String,
-    /// Send every new local copy to the other devices.
-    pub auto_send: bool,
 }
 
 #[cfg(test)]

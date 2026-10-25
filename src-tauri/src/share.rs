@@ -1,30 +1,36 @@
-//! Sends history items to the user's other devices through a Pinchy relay,
-//! and receives theirs into the history.
+//! Keeps this device's history identical to the user's other devices
+//! through a Pinchy relay, which holds the history.
+//!
+//! Every local change (a new copy, a recopy that moves an item up, a
+//! deletion) is queued in the database and pushed to the relay; a second
+//! thread follows the relay's change feed and applies what the other devices
+//! did. The relay's retention policy decides what stays; its deletions arrive
+//! through the feed like any other.
 //!
 //! Contents are sealed with XChaCha20-Poly1305 under a key that only the
-//! user's devices know; the relay sees ciphertext and sizes. Each part is
-//! bound to its item id so the relay cannot swap them. Device names travel
+//! user's devices know; the relay sees ciphertext, sizes and times. Each part
+//! is bound to its item id so the relay cannot swap them. Device names travel
 //! sealed too.
 //!
 //! Joining: the first device enters the one-time code the relay prints and
-//! creates the sharing key. Every later device enters a code shown by a
+//! creates the sharing key. A later computer enters a code shown by a
 //! connected device; the two run SPAKE2 over the relay with it, so the
 //! sharing key reaches the new device without the relay being able to read
-//! it. The device token and sharing key are kept in the OS keychain.
+//! it. A phone scans a QR code that carries the key itself together with a
+//! one-time join code. The device token and sharing key are kept in the OS
+//! keychain.
 //!
 //! Files travel as one blob, their contents back to back, and are capped at
-//! `MAX_FILES_BYTES` per item. Received files are kept in the app's own
-//! `files` folder, one subfolder per item.
-//!
-//! With auto-send on, every new local copy of text, a link, an image or files
-//! within the cap is queued for the other devices. Received items and
-//! Pinchy's own clipboard writes are never sent on, so items do not bounce
-//! between devices.
+//! `MAX_FILES_BYTES` per item; larger ones and folders stay on this device.
+//! Received files are kept in the app's own `files` folder, one subfolder per
+//! item. Copies the source app marked as concealed (password managers) stay
+//! local unless the relay's policy says otherwise.
 
+use crate::appicon::AppIconCache;
 use crate::clipboard::{self, CHANGED_EVENT};
-use crate::db::{Db, Item, NewItem};
+use crate::db::{Db, Item, NewItem, Op, Pending};
 use crate::platform;
-use crate::settings::{ShareConfig, SettingsStore};
+use crate::settings::{SettingsStore, ShareConfig};
 use base64::engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD};
 use base64::Engine;
 use chacha20poly1305::aead::{rand_core::RngCore, Aead, AeadCore, KeyInit, OsRng, Payload};
@@ -33,19 +39,23 @@ use reqwest::blocking::{Client, RequestBuilder, Response};
 use serde::{Deserialize, Serialize};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 use std::collections::HashSet;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+#[cfg(test)]
+use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const STATUS_EVENT: &str = "share-status";
 pub const INVITE_EVENT: &str = "share-invite";
-/// Header color for cards received from another device.
+/// Header color for items first copied on another device, until the app
+/// they came from is found here.
 const RECEIVED_COLOR: &str = "#c64735";
 const NONCE_LEN: usize = 24;
 const POLL_SECS: u64 = 25;
+const PAGE: i64 = 200;
+const POLICY_REFRESH: Duration = Duration::from_secs(600);
 const MAX_NAME_CHARS: usize = 64;
 const INVITE_TTL: Duration = Duration::from_secs(600);
 const JOIN_TIMEOUT: Duration = Duration::from_secs(60);
@@ -54,10 +64,12 @@ const KEYCHAIN_ACCOUNT: &str = "relay";
 const INVITER: &[u8] = b"pinchy-inviter";
 const JOINER: &[u8] = b"pinchy-joiner";
 const KEY_MISMATCH: &str =
-    "다른 공유 키로 보낸 항목이 있어 열 수 없어요. 서버를 초기화했다면 보낸 기기를 다시 연결해 주세요.";
+    "다른 공유 키로 만든 항목이 있어 열 수 없어요. 서버를 초기화했다면 모든 기기를 다시 연결해 주세요.";
 const UNKNOWN_DEVICE: &str = "다른 기기";
-const NO_PEERS: &str = "보낼 다른 기기가 없어요. 설정에서 기기를 추가해 주세요.";
-const AUTO_SEND_ATTEMPTS: u32 = 3;
+const SINCE_KEY: &str = "since";
+/// Set once the first sync after connecting has brought the history down
+/// and queued this device's own items.
+const INITIAL_KEY: &str = "initial_sync_done";
 const MB: u64 = 1024 * 1024;
 /// Largest total size of the files in one item. Below the relay's default
 /// blob limit of 64MB.
@@ -65,12 +77,29 @@ pub const MAX_FILES_BYTES: u64 = 50 * MB;
 /// Longest received file name, in UTF-8 bytes. File systems allow 255.
 const MAX_FILE_NAME_BYTES: usize = 200;
 
+/// The relay's rules, which every device follows.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Policy {
+    pub retention_days: u32,
+    pub max_storage_mb: u64,
+    pub max_blob_mb: u64,
+    pub sync_concealed: bool,
+    #[serde(default)]
+    pub usage: Option<RelayUsage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct RelayUsage {
+    pub items: i64,
+    pub bytes: i64,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Status {
     Off,
     Connecting,
-    Connected { devices: i64 },
+    Connected { devices: i64, policy: Policy },
     Error { message: String },
 }
 
@@ -90,27 +119,30 @@ struct Secrets {
     key: String,
 }
 
-/// Receiver status, cached secrets, the running invitation, and a
-/// generation counter that wakes the receiver when the connection changes.
+/// Sync status, cached secrets and policy, the running invitation, and
+/// generation counters that wake the sync threads.
 pub struct ShareState {
     status: Mutex<Status>,
+    policy: Mutex<Option<Policy>>,
     generation: Mutex<u64>,
     changed: Condvar,
+    outbox: Mutex<u64>,
+    outbox_changed: Condvar,
     secrets: Mutex<Option<Secrets>>,
     invite: Mutex<Option<Arc<AtomicBool>>>,
-    /// Item ids waiting to be auto-sent, in copy order.
-    outbox: Mutex<Option<Sender<i64>>>,
 }
 
 impl Default for ShareState {
     fn default() -> Self {
         ShareState {
             status: Mutex::new(Status::Connecting),
+            policy: Mutex::new(None),
             generation: Mutex::new(0),
             changed: Condvar::new(),
+            outbox: Mutex::new(0),
+            outbox_changed: Condvar::new(),
             secrets: Mutex::new(None),
             invite: Mutex::new(None),
-            outbox: Mutex::new(None),
         }
     }
 }
@@ -118,6 +150,11 @@ impl Default for ShareState {
 impl ShareState {
     pub fn status(&self) -> Status {
         self.status.lock().unwrap().clone()
+    }
+
+    /// The relay's policy while this device is connected.
+    pub fn policy(&self) -> Option<Policy> {
+        self.policy.lock().unwrap().clone()
     }
 
     fn set(&self, app: &AppHandle, status: Status) {
@@ -128,6 +165,11 @@ impl ShareState {
         }
     }
 
+    fn set_policy(&self, app: &AppHandle, devices: i64, policy: Policy) {
+        *self.policy.lock().unwrap() = Some(policy.clone());
+        self.set(app, Status::Connected { devices, policy });
+    }
+
     fn generation(&self) -> u64 {
         *self.generation.lock().unwrap()
     }
@@ -135,12 +177,29 @@ impl ShareState {
     fn connection_changed(&self) {
         *self.generation.lock().unwrap() += 1;
         self.changed.notify_all();
+        self.wake_pusher();
     }
 
     /// Sleeps until the connection changes or `timeout` passes.
     fn wait(&self, seen: u64, timeout: Duration) {
         let generation = self.generation.lock().unwrap();
         let _ = self.changed.wait_timeout_while(generation, timeout, |g| *g == seen);
+    }
+
+    fn wake_pusher(&self) {
+        *self.outbox.lock().unwrap() += 1;
+        self.outbox_changed.notify_all();
+    }
+
+    fn outbox_generation(&self) -> u64 {
+        *self.outbox.lock().unwrap()
+    }
+
+    /// Sleeps until something is queued, the connection changes or `timeout`
+    /// passes.
+    fn wait_outbox(&self, seen: u64, timeout: Duration) {
+        let outbox = self.outbox.lock().unwrap();
+        let _ = self.outbox_changed.wait_timeout_while(outbox, timeout, |g| *g == seen);
     }
 
     fn stop_invite(&self) {
@@ -235,7 +294,8 @@ impl Key {
 }
 
 /// The sealed description of an item. Image and file bytes travel as a
-/// separate blob.
+/// separate blob that never changes; the envelope is replaced on every
+/// recopy so the copy time travels with it.
 #[derive(Debug, Serialize, Deserialize, PartialEq)]
 struct Meta {
     v: u32,
@@ -245,9 +305,15 @@ struct Meta {
     /// For files, their names and sizes in blob order.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     files: Option<Vec<FileMeta>>,
-    /// The sender's own name for itself.
+    /// Name of the device the item was first copied on.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     from: Option<String>,
+    /// Name of the app it was copied from.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    app: Option<String>,
+    /// When it was last copied, ms since the epoch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    copied_at: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -374,12 +440,6 @@ fn clean_name(name: &str) -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-fn random_id() -> String {
-    let mut bytes = [0u8; 16];
-    OsRng.fill_bytes(&mut bytes);
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 fn random_digits(n: usize) -> String {
     let mut out = String::with_capacity(n);
     while out.len() < n {
@@ -468,6 +528,10 @@ impl Http {
         self.client.put(format!("{}{path}", self.server))
     }
 
+    fn put_json(&self, path: &str, body: serde_json::Value) -> RequestBuilder {
+        self.put(path).header(reqwest::header::CONTENT_TYPE, "application/json").body(body.to_string())
+    }
+
     fn delete(&self, path: &str) -> RequestBuilder {
         self.client.delete(format!("{}{path}", self.server))
     }
@@ -479,7 +543,7 @@ impl Http {
         };
         let response = request
             .send()
-            .map_err(|e| HttpError { status: None, message: format!("중계 서버에 연결할 수 없어요. ({e})") })?;
+            .map_err(|e| HttpError { status: None, message: format!("서버에 연결할 수 없어요. ({e})") })?;
         let status = response.status();
         if status.is_success() {
             return Ok(response);
@@ -487,22 +551,21 @@ impl Http {
         let code = status.as_u16();
         let message = match code {
             401 => "이 기기의 연결이 해제됐어요. 연결을 해제한 뒤 새 코드로 다시 연결해 주세요.".into(),
-            413 => "너무 커서 보낼 수 없어요.".into(),
-            422 => NO_PEERS.into(),
+            413 => "너무 커서 올릴 수 없어요.".into(),
             429 => "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해 주세요.".into(),
-            code => format!("중계 서버 오류예요. (HTTP {code})"),
+            code => format!("서버 오류예요. (HTTP {code})"),
         };
         Err(HttpError { status: Some(code), message })
     }
 
     fn json<T: for<'de> Deserialize<'de>>(response: Response) -> Result<T, String> {
-        let bytes = response.bytes().map_err(|e| format!("중계 서버 응답을 받지 못했어요. ({e})"))?;
-        serde_json::from_slice(&bytes).map_err(|e| format!("중계 서버 응답을 읽지 못했어요. ({e})"))
+        let bytes = response.bytes().map_err(|e| format!("서버 응답을 받지 못했어요. ({e})"))?;
+        serde_json::from_slice(&bytes).map_err(|e| format!("서버 응답을 읽지 못했어요. ({e})"))
     }
 }
 
 fn decode(field: &str) -> Result<Vec<u8>, String> {
-    STANDARD.decode(field).map_err(|_| "중계 서버 응답을 읽지 못했어요.".into())
+    STANDARD.decode(field).map_err(|_| "서버 응답을 읽지 못했어요.".into())
 }
 
 // ---------------------------------------------------------------------------
@@ -679,6 +742,25 @@ impl Invitation {
     }
 }
 
+/// What a phone scans: the relay, a one-time join code and the sharing key.
+/// The key rides in the URL fragment, which browsers never send to the
+/// server.
+fn join_link(server: &str, code: &str, key: &str) -> String {
+    format!("{server}/#join?code={code}&key={key}")
+}
+
+fn qr_svg(text: &str) -> Result<String, String> {
+    use qrcode::render::svg;
+    let code = qrcode::QrCode::new(text.as_bytes()).map_err(|e| format!("QR 코드를 만들지 못했어요. ({e})"))?;
+    Ok(code
+        .render::<svg::Color>()
+        .quiet_zone(false)
+        .min_dimensions(240, 240)
+        .dark_color(svg::Color("#000000"))
+        .light_color(svg::Color("#ffffff"))
+        .build())
+}
+
 // ---------------------------------------------------------------------------
 // Connected session
 
@@ -718,27 +800,42 @@ pub struct DeviceView {
     me: bool,
 }
 
+/// One entry of the relay's change feed.
 #[derive(Debug, Deserialize)]
-struct Incoming {
+struct Change {
     id: String,
-    envelope: String,
+    seq: i64,
+    origin: String,
+    updated_at: i64,
+    deleted: bool,
+    #[serde(default)]
+    envelope: Option<String>,
+    #[serde(default)]
     blob_size: Option<i64>,
 }
 
 #[derive(Deserialize)]
-struct Inbox {
-    items: Vec<Incoming>,
+struct ChangePage {
+    items: Vec<Change>,
+    next: i64,
+    more: bool,
 }
 
 #[derive(Deserialize)]
-struct Sent {
-    recipients: usize,
+struct PutResponse {
+    blob_pending: bool,
+}
+
+#[derive(Deserialize)]
+struct JoinCode {
+    code: String,
+    expires_in: u64,
 }
 
 enum ReceiveError {
-    /// Sealed with a different key. Kept on the relay in case it is fixed.
+    /// Sealed with a different key. Skipped; the relay keeps it.
     Locked,
-    /// Can never be stored, e.g. an unknown kind. Dropped.
+    /// Can never be stored, e.g. an unknown kind. Skipped.
     Invalid(String),
     /// Retry later.
     Network(String),
@@ -759,14 +856,13 @@ impl Relay {
         Ok(Http::json(self.http.send(self.http.get("/v1/me"))?)?)
     }
 
+    fn policy(&self) -> Result<Policy, String> {
+        Ok(Http::json(self.http.send(self.http.get("/v1/policy"))?)?)
+    }
+
     fn rename(&self, name: &str) -> Result<(), String> {
         let body = serde_json::json!({ "label": self.key.seal_label(name) });
-        self.http.send(
-            self.http
-                .put("/v1/me")
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
-                .body(body.to_string()),
-        )?;
+        self.http.send(self.http.put_json("/v1/me", body))?;
         Ok(())
     }
 
@@ -790,83 +886,138 @@ impl Relay {
         Ok(())
     }
 
-    /// Seals and queues `item` for every other device. Returns how many.
-    fn push(&self, item: &Item) -> Result<usize, String> {
-        let from = self.name.clone();
+    fn join_code(&self) -> Result<JoinCode, String> {
+        Ok(Http::json(self.http.send(self.http.post("/v1/join-codes", serde_json::json!({})))?)?)
+    }
+
+    fn cancel_join_code(&self) {
+        let _ = self.http.send(self.http.delete("/v1/join-codes"));
+    }
+
+    /// Seals `item` and puts it on the relay under its id, with its blob the
+    /// first time. `Ok(false)` when the relay deleted the item meanwhile.
+    fn put(&self, item: &Item) -> Result<bool, String> {
+        let from = item.origin_device.clone().or_else(|| self.name.clone());
+        let base = Meta {
+            v: 2,
+            kind: item.kind.clone(),
+            text: None,
+            files: None,
+            from,
+            app: item.source_app.clone(),
+            copied_at: Some(item.created_at),
+        };
         let (meta, blob) = match item.kind.as_str() {
-            "text" | "link" => {
-                (Meta { v: 1, kind: item.kind.clone(), text: Some(item.content.clone()), files: None, from }, None)
-            }
+            "text" | "link" => (Meta { text: Some(item.content.clone()), ..base }, None),
             "image" => {
                 let bytes = std::fs::read(&item.content).map_err(|_| "이미지 파일을 찾을 수 없어요.")?;
-                (Meta { v: 1, kind: "image".into(), text: None, files: None, from }, Some(bytes))
+                (base, Some(bytes))
             }
             "files" => {
                 let (files, bytes) = read_files(&item.content)?;
-                (Meta { v: 1, kind: "files".into(), text: None, files: Some(files), from }, Some(bytes))
+                (Meta { files: Some(files), ..base }, Some(bytes))
             }
-            kind => return Err(format!("보낼 수 없는 항목이에요. ({kind})")),
+            kind => return Err(format!("동기화할 수 없는 항목이에요. ({kind})")),
         };
-        let id = random_id();
-        let envelope = self.key.seal("meta", &id, &serde_json::to_vec(&meta).map_err(|e| e.to_string())?);
-        let body = serde_json::json!({ "id": id, "envelope": STANDARD.encode(envelope), "has_blob": blob.is_some() });
-        let sent: Sent = Http::json(self.http.send(self.http.post("/v1/items", body))?)?;
-        if let Some(bytes) = blob {
+        let id = &item.sync_id;
+        let envelope = self.key.seal("meta", id, &serde_json::to_vec(&meta).map_err(|e| e.to_string())?);
+        let body = serde_json::json!({ "envelope": STANDARD.encode(envelope), "has_blob": blob.is_some() });
+        let response = match self.http.send(self.http.put_json(&format!("/v1/items/{id}"), body)) {
+            Ok(response) => response,
+            Err(HttpError { status: Some(410), .. }) => return Ok(false),
+            Err(HttpError { status: Some(409), .. }) => {
+                return Err("서버의 항목과 모양이 달라 올리지 못했어요.".into())
+            }
+            Err(e) => return Err(e.message),
+        };
+        let put: PutResponse = Http::json(response)?;
+        if let (true, Some(bytes)) = (put.blob_pending, blob) {
             self.http.send(
                 self.http
                     .put(&format!("/v1/items/{id}/blob"))
                     .timeout(Duration::from_secs(600))
-                    .body(self.key.seal("blob", &id, &bytes)),
+                    .body(self.key.seal("blob", id, &bytes)),
             )?;
         }
-        Ok(sent.recipients)
+        Ok(true)
     }
 
-    fn inbox(&self, wait: u64) -> Result<Vec<Incoming>, String> {
-        let request = self.http.get(&format!("/v1/inbox?wait={wait}")).timeout(Duration::from_secs(wait + 30));
-        Ok(Http::json::<Inbox>(self.http.send(request)?)?.items)
-    }
-
-    fn ack(&self, id: &str) -> Result<(), String> {
-        self.http.send(self.http.post(&format!("/v1/items/{id}/ack"), serde_json::json!({})))?;
+    fn delete(&self, id: &str) -> Result<(), String> {
+        self.http.send(self.http.delete(&format!("/v1/items/{id}")))?;
         Ok(())
     }
 
-    /// Downloads and opens an incoming item. Images and files are written to
-    /// disk by `into_item`, under the history's file lock.
-    fn open(&self, incoming: &Incoming) -> Result<Opened, ReceiveError> {
-        let envelope = STANDARD
-            .decode(&incoming.envelope)
-            .map_err(|_| ReceiveError::Invalid("envelope is not base64".into()))?;
-        let meta = self.key.open("meta", &incoming.id, &envelope).ok_or(ReceiveError::Locked)?;
+    fn delete_all(&self) -> Result<(), String> {
+        self.http.send(self.http.delete("/v1/items"))?;
+        Ok(())
+    }
+
+    /// The change feed after `since`. `Ok(None)` when the relay no longer
+    /// remembers that far back and the history must be fetched from zero.
+    fn changes(&self, since: i64, wait: u64) -> Result<Option<ChangePage>, String> {
+        let request = self
+            .http
+            .get(&format!("/v1/changes?since={since}&wait={wait}&limit={PAGE}"))
+            .timeout(Duration::from_secs(wait + 30));
+        match self.http.send(request) {
+            Ok(response) => Ok(Some(Http::json(response)?)),
+            Err(HttpError { status: Some(409), .. }) => Ok(None),
+            Err(e) => Err(e.message),
+        }
+    }
+
+    /// Opens a change's envelope: everything but the blob.
+    fn open_meta(&self, change: &Change) -> Result<Head, ReceiveError> {
+        let envelope = change.envelope.as_deref().ok_or_else(|| ReceiveError::Invalid("no envelope".into()))?;
+        let envelope = STANDARD.decode(envelope).map_err(|_| ReceiveError::Invalid("envelope is not base64".into()))?;
+        let meta = self.key.open("meta", &change.id, &envelope).ok_or(ReceiveError::Locked)?;
         let meta: Meta = serde_json::from_slice(&meta).map_err(|e| ReceiveError::Invalid(e.to_string()))?;
-        let from = meta.from.as_deref().and_then(clean_name).unwrap_or_else(|| UNKNOWN_DEVICE.into());
+        Ok(Head {
+            from: meta.from.as_deref().and_then(clean_name).unwrap_or_else(|| UNKNOWN_DEVICE.into()),
+            app: meta.app.as_deref().and_then(clean_name),
+            copied_at: meta.copied_at.unwrap_or(change.updated_at),
+            meta,
+        })
+    }
+
+    /// Downloads and opens a change. Images and files are written to disk by
+    /// `into_item`, under the history's file lock.
+    fn open(&self, change: &Change) -> Result<Opened, ReceiveError> {
+        let Head { meta, from, app, copied_at } = self.open_meta(change)?;
         let content = match (meta.kind.as_str(), meta.text, meta.files) {
             ("text" | "link", Some(text), _) if !text.trim().is_empty() => Content::Text(text),
-            ("image", _, _) if incoming.blob_size.is_some() => {
-                let png = self.blob(incoming)?;
+            ("image", _, _) if change.blob_size.is_some() => {
+                let png = self.blob(&change.id)?;
                 let (w, h) = png_size(&png).ok_or_else(|| ReceiveError::Invalid("blob is not a PNG image".into()))?;
                 Content::Png(png, w, h)
             }
-            ("files", _, Some(files)) if incoming.blob_size.is_some() => {
-                let blob = self.blob(incoming)?;
+            ("files", _, Some(files)) if change.blob_size.is_some() => {
+                let blob = self.blob(&change.id)?;
                 let files = split_files(&files, &blob)
                     .ok_or_else(|| ReceiveError::Invalid("file sizes do not match the blob".into()))?;
                 Content::Files(files)
             }
             (kind, _, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
         };
-        Ok(Opened { from, content })
+        Ok(Opened { from, app, copied_at, content })
     }
 
-    fn blob(&self, incoming: &Incoming) -> Result<Vec<u8>, ReceiveError> {
+    fn blob(&self, id: &str) -> Result<Vec<u8>, ReceiveError> {
         let response = self
             .http
-            .send(self.http.get(&format!("/v1/items/{}/blob", incoming.id)).timeout(Duration::from_secs(600)))
+            .send(self.http.get(&format!("/v1/items/{id}/blob")).timeout(Duration::from_secs(600)))
             .map_err(|e| ReceiveError::Network(e.message))?;
         let sealed = response.bytes().map_err(|e| ReceiveError::Network(e.to_string()))?;
-        self.key.open("blob", &incoming.id, &sealed).ok_or(ReceiveError::Locked)
+        self.key.open("blob", id, &sealed).ok_or(ReceiveError::Locked)
     }
+}
+
+/// A change's envelope, opened.
+struct Head {
+    meta: Meta,
+    from: String,
+    app: Option<String>,
+    copied_at: i64,
 }
 
 enum Content {
@@ -877,19 +1028,33 @@ enum Content {
 
 struct Opened {
     from: String,
+    app: Option<String>,
+    copied_at: i64,
     content: Content,
 }
 
 impl Opened {
-    fn into_item(self, images_dir: &Path, files_dir: &Path) -> Option<NewItem> {
+    /// Builds the local row. Items first copied on this device keep their
+    /// own look; others show the app they came from when it is installed
+    /// here too, else the device they came from.
+    fn into_item(self, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
-            Content::Png(png, w, h) => clipboard::png_item(images_dir, &png, w, h)?,
-            Content::Files(files) => clipboard::received_files_item(files_dir, &files)?,
+            Content::Png(png, w, h) => clipboard::png_item(&dirs.images, &png, w, h)?,
+            Content::Files(files) => clipboard::received_files_item(&dirs.files, &files)?,
         };
-        item.source_app = Some(self.from.clone());
-        item.app_color = Some(RECEIVED_COLOR.into());
-        item.origin_device = Some(self.from);
+        let look = self.app.as_deref().and_then(|app| icons.look_by_name(app));
+        item.source_app = self.app.clone().or_else(|| Some(self.from.clone()));
+        match look {
+            Some(look) => {
+                item.app_icon = look.icon;
+                item.app_color = look.color;
+            }
+            None => item.app_color = Some(RECEIVED_COLOR.into()),
+        }
+        if own_name != Some(self.from.as_str()) {
+            item.origin_device = Some(self.from);
+        }
         Some(item)
     }
 }
@@ -909,17 +1074,32 @@ fn session(app: &AppHandle) -> Result<Option<Relay>, String> {
 }
 
 fn connected(app: &AppHandle) -> Result<Relay, String> {
-    session(app)?.ok_or_else(|| "기기 간 공유를 먼저 연결해 주세요.".into())
+    session(app)?.ok_or_else(|| "기기 간 동기화를 먼저 연결해 주세요.".into())
 }
 
-/// Drops this device's connection locally.
+/// Drops this device's connection locally. The history stays as it is.
 fn forget(app: &AppHandle) -> Result<(), String> {
     let state = app.state::<ShareState>();
     state.stop_invite();
     app.state::<SettingsStore>().update(|s| s.share = None)?;
     forget_secrets(&state);
+    *state.policy.lock().unwrap() = None;
+    let db = app.state::<Db>();
+    let _ = db.set_sync_value(SINCE_KEY, None);
+    let _ = db.set_sync_value(INITIAL_KEY, None);
+    let _ = db.clear_outbox();
     state.set(app, Status::Off);
     state.connection_changed();
+    Ok(())
+}
+
+/// Starts following the relay from scratch: the whole history comes down,
+/// then everything here goes up.
+fn begin_sync(app: &AppHandle) -> Result<(), String> {
+    let db = app.state::<Db>();
+    db.clear_outbox().map_err(|e| e.to_string())?;
+    db.set_sync_value(SINCE_KEY, None).map_err(|e| e.to_string())?;
+    db.set_sync_value(INITIAL_KEY, None).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -955,11 +1135,16 @@ pub async fn join_share(app: AppHandle, name: String, server: String, code: Stri
         };
         let state = app.state::<ShareState>();
         save_secrets(&state, &secrets)?;
-        let config = ShareConfig { name, server, device_id, auto_send: false };
+        let config = ShareConfig { name, server, device_id };
+        begin_sync(&app)?;
         app.state::<SettingsStore>().update(|s| s.share = Some(config.clone()))?;
-        let status = match Relay::new(&config, &secrets)?.me() {
-            Ok(me) => Status::Connected { devices: me.devices },
-            Err(message) => Status::Error { message },
+        let relay = Relay::new(&config, &secrets)?;
+        let status = match (relay.me(), relay.policy()) {
+            (Ok(me), Ok(policy)) => {
+                *state.policy.lock().unwrap() = Some(policy.clone());
+                Status::Connected { devices: me.devices, policy }
+            }
+            (Err(message), _) | (_, Err(message)) => Status::Error { message },
         };
         state.set(&app, status.clone());
         state.connection_changed();
@@ -968,7 +1153,7 @@ pub async fn join_share(app: AppHandle, name: String, server: String, code: Stri
     .await
 }
 
-/// Shows a code another device can join with. Progress arrives as
+/// Shows a code another computer can join with. Progress arrives as
 /// `share-invite` events until the code is used, fails or expires.
 #[tauri::command]
 pub async fn start_invite(app: AppHandle) -> Result<String, String> {
@@ -987,9 +1172,7 @@ pub async fn start_invite(app: AppHandle) -> Result<String, String> {
             match invitation.poll(&relay) {
                 Ok(InviteStep::Waiting) => std::thread::sleep(Duration::from_millis(800)),
                 Ok(InviteStep::Joined(name)) => {
-                    if let Ok(me) = relay.me() {
-                        app.state::<ShareState>().set(&app, Status::Connected { devices: me.devices });
-                    }
+                    refresh_connected(&app, &relay);
                     let _ = app.emit(INVITE_EVENT, InviteEvent::Joined { name });
                     return;
                 }
@@ -1009,6 +1192,37 @@ pub fn cancel_invite(state: tauri::State<ShareState>) {
     state.stop_invite();
 }
 
+/// What a phone scans to join: a link with a one-time code and the sharing
+/// key, rendered as a QR code.
+#[derive(Debug, Serialize)]
+pub struct PhoneInvite {
+    link: String,
+    svg: String,
+    expires_in: u64,
+}
+
+#[tauri::command]
+pub async fn start_phone_invite(app: AppHandle) -> Result<PhoneInvite, String> {
+    blocking(move || {
+        let relay = connected(&app)?;
+        let code = relay.join_code()?;
+        let link = join_link(&relay.http.server, &code.code, &relay.key_text);
+        Ok(PhoneInvite { svg: qr_svg(&link)?, link, expires_in: code.expires_in })
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn cancel_phone_invite(app: AppHandle) -> Result<(), String> {
+    blocking(move || {
+        if let Ok(Some(relay)) = session(&app) {
+            relay.cancel_join_code();
+        }
+        Ok(())
+    })
+    .await
+}
+
 #[tauri::command]
 pub async fn share_devices(app: AppHandle) -> Result<Vec<DeviceView>, String> {
     blocking(move || connected(&app)?.devices()).await
@@ -1023,9 +1237,7 @@ pub async fn remove_share_device(app: AppHandle, id: String) -> Result<(), Strin
         if id == relay.device_id {
             return forget(&app);
         }
-        if let Ok(me) = relay.me() {
-            app.state::<ShareState>().set(&app, Status::Connected { devices: me.devices });
-        }
+        refresh_connected(&app, &relay);
         Ok(())
     })
     .await
@@ -1047,22 +1259,7 @@ pub async fn disconnect_share(app: AppHandle) -> Result<Option<String>, String> 
     .await
 }
 
-#[tauri::command]
-pub fn set_share_auto(store: tauri::State<SettingsStore>, enabled: bool) -> Result<bool, String> {
-    let mut connected = false;
-    store.update(|s| {
-        if let Some(share) = s.share.as_mut() {
-            share.auto_send = enabled;
-            connected = true;
-        }
-    })?;
-    if !connected {
-        return Err("기기 간 공유를 먼저 연결해 주세요.".into());
-    }
-    Ok(enabled)
-}
-
-/// Renames this device for the device list and for items it sends.
+/// Renames this device for the device list and for items it copies.
 #[tauri::command]
 pub async fn set_share_name(app: AppHandle, name: String) -> Result<String, String> {
     blocking(move || {
@@ -1079,114 +1276,184 @@ pub async fn set_share_name(app: AppHandle, name: String) -> Result<String, Stri
     .await
 }
 
-/// Sends a history item to every other device. Returns how many.
-#[tauri::command]
-pub async fn send_item(app: AppHandle, id: i64) -> Result<usize, String> {
-    blocking(move || {
-        let relay = connected(&app)?;
-        let item = app.state::<Db>().get(id).map_err(|e| e.to_string())?.ok_or("항목을 찾을 수 없어요.")?;
-        relay.push(&item)
-    })
-    .await
+/// Deletes the history on the relay, for every device. Nothing to do when
+/// this device is not connected.
+pub fn clear_remote(app: &AppHandle) -> Result<(), String> {
+    if let Some(relay) = session(app)? {
+        relay.delete_all().map_err(|e| format!("서버의 히스토리를 지우지 못했어요. {e}"))?;
+    }
+    Ok(())
+}
+
+/// Called after the history changed locally so the pusher sends the queue.
+pub fn changed(app: &AppHandle) {
+    app.state::<ShareState>().wake_pusher();
+}
+
+fn refresh_connected(app: &AppHandle, relay: &Relay) {
+    let state = app.state::<ShareState>();
+    match (relay.me(), relay.policy()) {
+        (Ok(me), Ok(policy)) => state.set_policy(app, me.devices, policy),
+        (Err(message), _) | (_, Err(message)) => state.set(app, Status::Error { message }),
+    }
 }
 
 // ---------------------------------------------------------------------------
-// Auto-send
+// Sync
 
-/// Whether a stored item is a new local copy worth sending on. Files must
-/// also fit under the cap; `copied` checks that.
-fn auto_sendable(item: &Item) -> bool {
-    matches!(item.kind.as_str(), "text" | "link" | "image" | "files") && item.origin_device.is_none()
+/// Where received images and files are written, and app icons are cached.
+struct Dirs {
+    images: PathBuf,
+    files: PathBuf,
+    icons: PathBuf,
 }
 
-/// Called by the clipboard watcher after it stores a new local copy.
-pub fn copied(app: &AppHandle, hash: &str) {
-    let auto = app.state::<SettingsStore>().get().share.is_some_and(|s| s.auto_send && !s.device_id.is_empty());
-    if !auto {
-        return;
-    }
-    let Ok(Some(item)) = app.state::<Db>().get_by_hash(hash) else { return };
-    // Folders and files over the cap are left for a manual send, which
-    // explains why they cannot go.
-    if !auto_sendable(&item) || (item.kind == "files" && file_list(&item.content).is_err()) {
-        return;
-    }
-    if let Some(outbox) = app.state::<ShareState>().outbox.lock().unwrap().as_ref() {
-        let _ = outbox.send(item.id);
-    }
+pub fn start(app: AppHandle, images_dir: PathBuf, files_dir: PathBuf, icons_dir: PathBuf) {
+    let pusher = app.clone();
+    std::thread::Builder::new()
+        .name("share-push".into())
+        .spawn(move || push_loop(pusher))
+        .expect("spawn share pusher");
+    let dirs = Dirs { images: images_dir, files: files_dir, icons: icons_dir };
+    std::thread::Builder::new()
+        .name("share-pull".into())
+        .spawn(move || pull_loop(app, dirs))
+        .expect("spawn share puller");
 }
 
-fn send_loop(app: AppHandle, queue: mpsc::Receiver<i64>) {
-    for id in queue {
-        let Ok(Some(item)) = app.state::<Db>().get(id) else { continue };
-        for attempt in 1..=AUTO_SEND_ATTEMPTS {
-            let relay = match session(&app) {
-                Ok(Some(relay)) => relay,
-                _ => break,
-            };
-            match relay.push(&item) {
-                Ok(_) => break,
-                Err(e) if e == NO_PEERS => break,
-                Err(message) if attempt == AUTO_SEND_ATTEMPTS => {
-                    eprintln!("[pinchy] auto-send of item {id} failed: {message}");
-                    let state = app.state::<ShareState>();
-                    state.set(&app, Status::Error { message: format!("자동으로 보내지 못한 항목이 있어요. {message}") });
+/// Whether a queued item leaves this device at all.
+fn syncable(item: &Item, policy: &Policy) -> bool {
+    if item.concealed && !policy.sync_concealed {
+        return false;
+    }
+    if item.kind == "files" && file_list(&item.content).is_err() {
+        return false;
+    }
+    matches!(item.kind.as_str(), "text" | "link" | "image" | "files")
+}
+
+/// Sends what the outbox holds, oldest first, whenever something is queued.
+fn push_loop(app: AppHandle) {
+    let state = app.state::<ShareState>();
+    let db = app.state::<Db>();
+    let mut backoff = 2;
+    loop {
+        let seen = state.outbox_generation();
+        let relay = match session(&app) {
+            Ok(Some(relay)) => relay,
+            _ => {
+                state.wait_outbox(seen, Duration::from_secs(3600));
+                continue;
+            }
+        };
+        let policy = match state.policy() {
+            Some(policy) => policy,
+            None => match relay.policy() {
+                Ok(policy) => {
+                    *state.policy.lock().unwrap() = Some(policy.clone());
+                    policy
                 }
-                Err(_) => std::thread::sleep(Duration::from_secs(2 * u64::from(attempt))),
+                Err(message) => {
+                    state.set(&app, Status::Error { message });
+                    state.wait_outbox(seen, Duration::from_secs(backoff));
+                    backoff = (backoff * 2).min(60);
+                    continue;
+                }
+            },
+        };
+        let pending = match db.outbox(50) {
+            Ok(pending) => pending,
+            Err(e) => {
+                eprintln!("[pinchy] outbox read failed: {e}");
+                state.wait_outbox(seen, Duration::from_secs(10));
+                continue;
+            }
+        };
+        if pending.is_empty() {
+            state.wait_outbox(seen, Duration::from_secs(3600));
+            continue;
+        }
+        let mut failed = None;
+        for entry in &pending {
+            match push_one(&relay, &db, entry, &policy) {
+                Ok(()) => {
+                    let _ = db.dequeue(entry);
+                }
+                Err(message) => {
+                    failed = Some(message);
+                    break;
+                }
+            }
+        }
+        match failed {
+            Some(message) => {
+                state.set(&app, Status::Error { message });
+                state.wait_outbox(seen, Duration::from_secs(backoff));
+                backoff = (backoff * 2).min(60);
+            }
+            None => {
+                backoff = 2;
+                if !matches!(state.status(), Status::Connected { .. }) {
+                    refresh_connected(&app, &relay);
+                }
             }
         }
     }
 }
 
-// ---------------------------------------------------------------------------
-// Receiver
-
-fn store(app: &AppHandle, relay: &Relay, incoming: &Incoming, dirs: &Dirs) -> Result<(), ReceiveError> {
-    let opened = relay.open(incoming)?;
-    let db = app.state::<Db>();
-    {
-        let _files = db.1.lock().unwrap();
-        let item = opened
-            .into_item(&dirs.images, &dirs.files)
-            .ok_or_else(|| ReceiveError::Network("받은 이미지나 파일을 저장하지 못했어요.".into()))?;
-        db.upsert(item).map_err(|e| ReceiveError::Network(e.to_string()))?;
+fn push_one(relay: &Relay, db: &Db, entry: &Pending, policy: &Policy) -> Result<(), String> {
+    match entry.op {
+        Op::Delete => relay.delete(&entry.sync_id),
+        Op::Upsert => {
+            let Some(item) = db.get_by_sync_id(&entry.sync_id).map_err(|e| e.to_string())? else {
+                return Ok(());
+            };
+            if !syncable(&item, policy) {
+                return Ok(());
+            }
+            match relay.put(&item) {
+                Ok(_) => Ok(()),
+                // A local problem with this item must not block the queue.
+                Err(e) if e.contains("찾을 수 없어요") || e.contains("모양이 달라") => {
+                    eprintln!("[pinchy] skipping item {}: {e}", entry.sync_id);
+                    Ok(())
+                }
+                Err(e) => Err(e),
+            }
+        }
     }
-    let _ = app.emit(CHANGED_EVENT, ());
-    Ok(())
 }
 
-/// Where received images and files are written.
-struct Dirs {
-    images: PathBuf,
-    files: PathBuf,
+/// Why the whole feed is being read from zero.
+#[derive(Clone, Copy, PartialEq)]
+enum FullSync {
+    /// Right after connecting: the history comes down, then this device's
+    /// own items go up.
+    Initial,
+    /// The relay forgot how far this device had got: rows it no longer has
+    /// were deleted meanwhile.
+    Reset,
 }
 
-pub fn start(app: AppHandle, images_dir: PathBuf, files_dir: PathBuf) {
-    let (outbox, queue) = mpsc::channel();
-    *app.state::<ShareState>().outbox.lock().unwrap() = Some(outbox);
-    let sender = app.clone();
-    std::thread::Builder::new()
-        .name("share-sender".into())
-        .spawn(move || send_loop(sender, queue))
-        .expect("spawn share sender");
-    let dirs = Dirs { images: images_dir, files: files_dir };
-    std::thread::Builder::new()
-        .name("share-receiver".into())
-        .spawn(move || receive_loop(app, dirs))
-        .expect("spawn share receiver");
-}
-
-fn receive_loop(app: AppHandle, dirs: Dirs) {
+/// Follows the relay's change feed and applies it to the local history.
+fn pull_loop(app: AppHandle, dirs: Dirs) {
     let state = app.state::<ShareState>();
+    let db = app.state::<Db>();
+    let mut icons = AppIconCache::new(dirs.icons.clone());
     let mut seen = u64::MAX;
-    let mut locked: HashSet<String> = HashSet::new();
     let mut backoff = 5;
+    let mut policy_checked: Option<Instant> = None;
+    let mut key_mismatch_reported = false;
+    // While reading the feed from zero: why, and the ids seen so far.
+    let mut full_sync: Option<(FullSync, HashSet<String>)> = None;
     loop {
         let generation = state.generation();
         if generation != seen {
             seen = generation;
-            locked.clear();
             backoff = 5;
+            policy_checked = None;
+            key_mismatch_reported = false;
+            full_sync = None;
         }
         let relay = match session(&app) {
             Ok(Some(relay)) => relay,
@@ -1201,8 +1468,24 @@ fn receive_loop(app: AppHandle, dirs: Dirs) {
                 continue;
             }
         };
-        let items = match relay.inbox(POLL_SECS) {
-            Ok(items) => items,
+        if policy_checked.is_none_or(|at| at.elapsed() >= POLICY_REFRESH) {
+            refresh_connected(&app, &relay);
+            policy_checked = Some(Instant::now());
+        }
+        if full_sync.is_none() && db.sync_value(INITIAL_KEY).ok().flatten().is_none() {
+            // The first sync never finished (or never started): start over.
+            let _ = db.set_sync_value(SINCE_KEY, None);
+            full_sync = Some((FullSync::Initial, HashSet::new()));
+        }
+        let since: i64 = db.sync_value(SINCE_KEY).ok().flatten().and_then(|v| v.parse().ok()).unwrap_or(0);
+        let page = match relay.changes(since, if full_sync.is_some() { 0 } else { POLL_SECS }) {
+            Ok(Some(page)) => page,
+            Ok(None) => {
+                // Behind the relay's memory: read everything again.
+                let _ = db.set_sync_value(SINCE_KEY, None);
+                full_sync = Some((FullSync::Reset, HashSet::new()));
+                continue;
+            }
             Err(message) => {
                 state.set(&app, Status::Error { message });
                 state.wait(seen, Duration::from_secs(backoff));
@@ -1211,42 +1494,120 @@ fn receive_loop(app: AppHandle, dirs: Dirs) {
             }
         };
         backoff = 5;
-        let mut failed = None;
-        let fresh: Vec<&Incoming> = items.iter().filter(|i| !locked.contains(&i.id)).collect();
-        for incoming in fresh {
-            match store(&app, &relay, incoming, &dirs) {
-                Ok(()) => {
-                    if let Err(e) = relay.ack(&incoming.id) {
-                        failed = Some(e);
-                        break;
+        let mut changed = false;
+        let mut stopped = None;
+        for change in &page.items {
+            if let Some((_, ids)) = full_sync.as_mut() {
+                if !change.deleted {
+                    ids.insert(change.id.clone());
+                }
+            } else if change.origin == relay.device_id {
+                // Our own change coming back; the history already has it.
+                continue;
+            }
+            match apply(&app, &relay, &db, change, &dirs, &mut icons) {
+                Ok(did) => changed |= did,
+                Err(ReceiveError::Locked) => {
+                    if !key_mismatch_reported {
+                        eprintln!("[pinchy] item {} is sealed with another key", change.id);
+                        state.set(&app, Status::Error { message: KEY_MISMATCH.into() });
+                        key_mismatch_reported = true;
                     }
                 }
-                Err(ReceiveError::Locked) => {
-                    locked.insert(incoming.id.clone());
-                }
-                Err(ReceiveError::Invalid(e)) => {
-                    eprintln!("[pinchy] dropping shared item {}: {e}", incoming.id);
-                    let _ = relay.ack(&incoming.id);
-                }
+                Err(ReceiveError::Invalid(e)) => eprintln!("[pinchy] skipping synced item {}: {e}", change.id),
                 Err(ReceiveError::Network(e)) => {
-                    failed = Some(e);
+                    stopped = Some((change.seq, e));
                     break;
                 }
             }
         }
-        if let Some(message) = failed {
-            state.set(&app, Status::Error { message });
-            state.wait(seen, Duration::from_secs(backoff));
-        } else if items.iter().any(|i| locked.contains(&i.id)) {
-            // The relay keeps returning these at once; don't spin on them.
-            state.set(&app, Status::Error { message: KEY_MISMATCH.into() });
-            state.wait(seen, Duration::from_secs(30));
-        } else if !matches!(state.status(), Status::Connected { .. }) {
-            match relay.me() {
-                Ok(me) => state.set(&app, Status::Connected { devices: me.devices }),
-                Err(message) => state.set(&app, Status::Error { message }),
+        if changed {
+            let _ = app.emit(CHANGED_EVENT, ());
+        }
+        match stopped {
+            Some((seq, message)) => {
+                // Keep what was applied; retry from the failed change.
+                let _ = db.set_sync_value(SINCE_KEY, Some(&(seq - 1).to_string()));
+                state.set(&app, Status::Error { message });
+                state.wait(seen, Duration::from_secs(backoff));
+                backoff = (backoff * 2).min(60);
+                continue;
+            }
+            None => {
+                let _ = db.set_sync_value(SINCE_KEY, Some(&page.next.to_string()));
             }
         }
+        if page.more {
+            continue;
+        }
+        if let Some((why, ids)) = full_sync.take() {
+            finish_full_sync(&app, &db, why, &ids);
+            let _ = db.set_sync_value(INITIAL_KEY, Some("1"));
+            refresh_connected(&app, &relay);
+        } else if !matches!(state.status(), Status::Connected { .. }) && !key_mismatch_reported {
+            refresh_connected(&app, &relay);
+        }
+    }
+}
+
+/// Applies one change. Returns whether the visible history changed.
+fn apply(app: &AppHandle, relay: &Relay, db: &Db, change: &Change, dirs: &Dirs, icons: &mut AppIconCache) -> Result<bool, ReceiveError> {
+    if change.deleted {
+        return db.apply_remote_delete(&change.id).map_err(|e| ReceiveError::Network(e.to_string()));
+    }
+    // An item already here only needs its new copy time, not its blob again.
+    let head = relay.open_meta(change)?;
+    let origin = (relay.name.as_deref() != Some(head.from.as_str())).then_some(head.from.as_str());
+    if let Some(changed) = db
+        .bump_remote(&change.id, head.copied_at, head.app.as_deref(), origin)
+        .map_err(|e| ReceiveError::Network(e.to_string()))?
+    {
+        return Ok(changed);
+    }
+    let opened = relay.open(change)?;
+    let copied_at = opened.copied_at;
+    let applied = {
+        let _files = db.1.lock().unwrap();
+        let item = opened
+            .into_item(dirs, icons, relay.name.as_deref())
+            .ok_or_else(|| ReceiveError::Network("받은 이미지나 파일을 저장하지 못했어요.".into()))?;
+        drop(_files);
+        db.apply_remote(&change.id, item, copied_at).map_err(|e| ReceiveError::Network(e.to_string()))?
+    };
+    if let Some(duplicate) = &applied.delete_remote {
+        let _ = db.queue_delete(duplicate);
+    }
+    if applied.delete_remote.is_some() || applied.push.is_some() {
+        app.state::<ShareState>().wake_pusher();
+    }
+    Ok(applied.changed)
+}
+
+/// After the whole history came down. On a reset, rows the relay does not
+/// have and that are not about to be pushed were deleted while this device
+/// was away. Either way, items only this device has go up.
+fn finish_full_sync(app: &AppHandle, db: &Db, why: FullSync, on_relay: &HashSet<String>) {
+    if why == FullSync::Reset {
+        let pending: HashSet<String> =
+            db.outbox(i64::MAX).unwrap_or_default().into_iter().map(|p| p.sync_id).collect();
+        let mut removed = false;
+        if let Ok(items) = db.list("", i64::MAX) {
+            for item in items {
+                if !on_relay.contains(&item.sync_id) && !pending.contains(&item.sync_id) && !item.concealed {
+                    if let Ok(true) = db.apply_remote_delete(&item.sync_id) {
+                        removed = true;
+                    }
+                }
+            }
+        }
+        if removed {
+            let _ = app.emit(CHANGED_EVENT, ());
+        }
+    }
+    match db.queue_missing(on_relay) {
+        Ok(0) => {}
+        Ok(_) => app.state::<ShareState>().wake_pusher(),
+        Err(e) => eprintln!("[pinchy] queueing the history failed: {e}"),
     }
 }
 
@@ -1258,12 +1619,12 @@ mod tests {
     fn sealed_parts_open_only_with_the_same_key_part_and_id() {
         let key = Key::parse(&generate_key()).unwrap();
         let other = Key::parse(&generate_key()).unwrap();
-        let id = random_id();
+        let id = crate::db::new_sync_id();
         let sealed = key.seal("meta", &id, b"hello");
         assert_eq!(key.open("meta", &id, &sealed).unwrap(), b"hello");
         assert!(other.open("meta", &id, &sealed).is_none(), "different key");
         assert!(key.open("blob", &id, &sealed).is_none(), "different part");
-        assert!(key.open("meta", &random_id(), &sealed).is_none(), "different item");
+        assert!(key.open("meta", &crate::db::new_sync_id(), &sealed).is_none(), "different item");
         let mut tampered = sealed.clone();
         *tampered.last_mut().unwrap() ^= 1;
         assert!(key.open("meta", &id, &tampered).is_none());
@@ -1275,7 +1636,7 @@ mod tests {
 
     #[test]
     fn ids_keys_and_codes_have_the_expected_shape() {
-        let id = random_id();
+        let id = crate::db::new_sync_id();
         assert_eq!(id.len(), 32);
         assert!(id.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()));
         assert_eq!(generate_key().len(), 43);
@@ -1328,18 +1689,32 @@ mod tests {
     }
 
     #[test]
+    fn phone_links_keep_the_key_in_the_fragment_and_render_as_qr() {
+        let link = join_link("https://relay.example.org", "abc123", "k_-ey");
+        assert_eq!(link, "https://relay.example.org/#join?code=abc123&key=k_-ey");
+        let svg = qr_svg(&link).unwrap();
+        assert!(svg.starts_with("<?xml") || svg.starts_with("<svg"));
+        assert!(svg.contains("<svg"));
+    }
+
+    #[test]
     fn meta_keeps_text_and_omits_it_for_images() {
-        let text = Meta { v: 1, kind: "text".into(), text: Some("안녕".into()), files: None, from: Some("집 맥".into()) };
-        let image = Meta { v: 1, kind: "image".into(), text: None, files: None, from: None };
-        assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":1,"kind":"image"}"#);
+        let text = Meta {
+            v: 2, kind: "text".into(), text: Some("안녕".into()), files: None,
+            from: Some("집 맥".into()), app: Some("Notes".into()), copied_at: Some(1_700_000_000_000),
+        };
+        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None };
+        assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":2,"kind":"image"}"#);
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&text).unwrap()).unwrap();
         assert_eq!(restored, text);
         let files = Meta {
-            v: 1, kind: "files".into(), text: None, from: None,
+            v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None,
             files: Some(vec![FileMeta { name: "보고서.pdf".into(), size: 3 }]),
         };
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&files).unwrap()).unwrap();
         assert_eq!(restored, files);
+        let old: Meta = serde_json::from_str(r#"{"v":1,"kind":"text","text":"x","from":"회사 맥"}"#).unwrap();
+        assert_eq!(old.copied_at, None, "0.x envelopes fall back to the relay's time");
     }
 
     #[test]
@@ -1391,19 +1766,26 @@ mod tests {
         assert_eq!(clean_name(&"가".repeat(100)).unwrap().chars().count(), MAX_NAME_CHARS);
     }
 
-    #[test]
-    fn only_new_local_items_are_auto_sent() {
-        let item = |kind: &str, origin: Option<&str>| Item {
-            id: 1, kind: kind.into(), content: String::new(), preview: String::new(), source_app: None,
+    fn item(kind: &str, content: &str, concealed: bool) -> Item {
+        Item {
+            id: 1, kind: kind.into(), content: content.into(), preview: String::new(), source_app: None,
             app_icon: None, app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None,
-            og_image: None, origin_device: origin.map(Into::into),
+            og_image: None, origin_device: None, sync_id: crate::db::new_sync_id(), concealed,
+        }
+    }
+
+    #[test]
+    fn concealed_copies_stay_local_unless_the_relay_allows_them() {
+        let policy = |sync_concealed| Policy {
+            retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed, usage: None,
         };
-        assert!(auto_sendable(&item("text", None)));
-        assert!(auto_sendable(&item("link", None)));
-        assert!(auto_sendable(&item("image", None)));
-        assert!(auto_sendable(&item("files", None)));
-        assert!(!auto_sendable(&item("files", Some("회사 맥"))));
-        assert!(!auto_sendable(&item("text", Some("회사 맥"))), "received items do not bounce back");
+        assert!(syncable(&item("text", "x", false), &policy(false)));
+        assert!(syncable(&item("link", "https://a", false), &policy(false)));
+        assert!(syncable(&item("image", "/nope.png", false), &policy(false)));
+        assert!(!syncable(&item("text", "hunter2", true), &policy(false)));
+        assert!(syncable(&item("text", "hunter2", true), &policy(true)));
+        assert!(!syncable(&item("files", "[]", false), &policy(true)), "nothing to send");
+        assert!(!syncable(&item("files", "[\"/definitely/missing\"]", false), &policy(true)));
     }
 
     #[test]
@@ -1423,8 +1805,7 @@ mod tests {
     #[ignore]
     fn relay_round_trip() {
         let server = std::env::var("PINCHY_TEST_RELAY").unwrap();
-        let config =
-            |name: &str, device_id: String| ShareConfig { name: name.into(), server: server.clone(), device_id, auto_send: false };
+        let config = |name: &str, device_id: String| ShareConfig { name: name.into(), server: server.clone(), device_id };
 
         // First device, then an invited one.
         let Code::First(first) = parse_code(&std::env::var("PINCHY_TEST_FIRST_CODE").unwrap()).unwrap() else {
@@ -1450,22 +1831,7 @@ mod tests {
         let (b_id, b_secrets) = joiner.join().unwrap().unwrap();
         assert_eq!(b_secrets.key, a_secrets.key, "the sharing key arrived");
         let b = Relay::new(&config("회사 맥", b_id.clone()), &b_secrets).unwrap();
-
-        // A wrong guess ends the invitation.
-        let (mut guessed, code) = Invitation::start(&a).unwrap();
-        let Code::Invite { nameplate, .. } = parse_code(&code).unwrap() else { panic!() };
-        let attacker = {
-            let server = server.clone();
-            std::thread::spawn(move || join_invited(&server, "x", &nameplate, "00000000"))
-        };
-        let outcome = loop {
-            match guessed.poll(&a) {
-                Ok(InviteStep::Waiting) => std::thread::sleep(Duration::from_millis(100)),
-                other => break other,
-            }
-        };
-        assert!(matches!(outcome, Err(InviteEvent::Failed { .. })));
-        assert!(attacker.join().unwrap().is_err());
+        assert_eq!(a.policy().unwrap().retention_days, 30);
 
         // Names and items.
         let names: Vec<(String, bool)> = b.devices().unwrap().into_iter().map(|d| (d.name, d.me)).collect();
@@ -1473,47 +1839,59 @@ mod tests {
         b.rename("회사 노트북").unwrap();
         assert_eq!(a.devices().unwrap()[1].name, "회사 노트북");
 
-        let images = std::env::temp_dir().join(format!("pinchy-share-{}-{}", std::process::id(), crate::db::now_ms()));
-        std::fs::create_dir_all(&images).unwrap();
+        let dir = std::env::temp_dir().join(format!("pinchy-share-{}-{}", std::process::id(), crate::db::now_ms()));
+        let dirs = Dirs { images: dir.join("images"), files: dir.join("files"), icons: dir.join("icons") };
+        std::fs::create_dir_all(&dirs.images).unwrap();
+        std::fs::create_dir_all(&dirs.icons).unwrap();
         let mut png = Vec::new();
         image::RgbaImage::new(4, 5)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .unwrap();
-        let source = images.join("source.png");
+        let source = dir.join("source.png");
         std::fs::write(&source, &png).unwrap();
-        let item = |kind: &str, content: String| Item {
-            id: 0, kind: kind.into(), content, preview: String::new(), source_app: None, app_icon: None,
-            app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None, og_image: None,
-            origin_device: None,
-        };
-        assert_eq!(a.push(&item("text", "집에서 보낸 문장".into())).unwrap(), 1);
-        assert_eq!(a.push(&item("image", source.to_string_lossy().into_owned())).unwrap(), 1);
-        let note = images.join("메모.txt");
+        let mut text = item("text", "집에서 보낸 문장", false);
+        text.created_at = 1_700_000_000_000;
+        assert!(a.put(&text).unwrap());
+        assert!(a.put(&item("image", &source.to_string_lossy(), false)).unwrap());
+        let note = dir.join("메모.txt");
         std::fs::write(&note, "파일 내용").unwrap();
         let files = serde_json::to_string(&[&note, &source]).unwrap();
-        assert_eq!(a.push(&item("files", files)).unwrap(), 1);
-        assert!(a.push(&item("files", "[]".into())).is_err());
-        let incoming = b.inbox(5).unwrap();
-        let received = images.join("received");
-        let opened: Vec<NewItem> =
-            incoming.iter().map(|i| b.open(i).ok().unwrap().into_item(&images, &received).unwrap()).collect();
-        assert_eq!(opened[0].content, "집에서 보낸 문장");
-        assert_eq!(opened[0].origin_device.as_deref(), Some("집 맥"));
-        assert_eq!(std::fs::read(&opened[1].content).unwrap(), png);
-        let paths: Vec<PathBuf> = serde_json::from_str(&opened[2].content).unwrap();
+        assert!(a.put(&item("files", &files, false)).unwrap());
+        assert!(a.put(&item("files", "[]", false)).is_err());
+        // The relay may hold earlier history; look at what this run created.
+        let page = b.changes(0, 5).unwrap().unwrap();
+        let ours: Vec<&Change> = page.items.iter().filter(|c| c.origin == a_id && !c.deleted).collect();
+        assert_eq!(ours.len(), 3);
+        let mut icons = AppIconCache::new(dirs.icons.clone());
+        let opened: Vec<(i64, NewItem)> = ours
+            .iter()
+            .map(|c| {
+                let o = b.open(c).ok().unwrap();
+                (o.copied_at, o.into_item(&dirs, &mut icons, Some("회사 노트북")).unwrap())
+            })
+            .collect();
+        assert_eq!(opened[0].0, 1_700_000_000_000);
+        assert_eq!(opened[0].1.content, "집에서 보낸 문장");
+        assert_eq!(opened[0].1.origin_device.as_deref(), Some("집 맥"));
+        assert_eq!(std::fs::read(&opened[1].1.content).unwrap(), png);
+        let paths: Vec<PathBuf> = serde_json::from_str(&opened[2].1.content).unwrap();
         assert_eq!(paths[0].file_name().unwrap(), "메모.txt");
         assert_eq!(std::fs::read_to_string(&paths[0]).unwrap(), "파일 내용");
-        assert_eq!(std::fs::read(&paths[1]).unwrap(), png);
-        assert!(paths[0].starts_with(&received));
-        for i in &incoming {
-            b.ack(&i.id).unwrap();
-        }
-        assert!(b.inbox(0).unwrap().is_empty());
+        assert!(paths[0].starts_with(&dirs.files));
+
+        // Deletions and the tail of the feed.
+        b.delete(&text.sync_id).unwrap();
+        let page = a.changes(page.next, 0).unwrap().unwrap();
+        assert!(page.items[0].deleted && page.items[0].id == text.sync_id);
+        assert!(!a.put(&text).unwrap(), "deleted items stay deleted");
+        a.delete_all().unwrap();
+        let page = b.changes(page.next, 0).unwrap().unwrap();
+        assert!(page.items.iter().all(|c| c.deleted));
 
         // Removing every device brings the first code back.
         a.remove_device(&b_id).unwrap();
         assert!(b.me().is_err());
         a.remove_device(&a_id).unwrap();
-        std::fs::remove_dir_all(images).unwrap();
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

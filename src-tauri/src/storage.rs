@@ -1,8 +1,13 @@
 //! Retention uses the real local footprint, including SQLite's WAL and caches.
+//!
+//! While this device follows a relay, the relay's policy decides what stays
+//! and its deletions arrive through the sync; here only concealed copies the
+//! relay never sees are expired, and unused caches are cleaned.
 use crate::{
     clipboard,
     db::{now_ms, Db, Item},
     settings::{Retention, SettingsStore},
+    share,
 };
 use rusqlite::{params, Connection};
 use serde::Serialize;
@@ -440,8 +445,22 @@ pub fn clear(db: &Db) -> Result<(), String> {
     let mut conn = db.0.lock().unwrap();
     let all = items(&conn)?;
     remove_rows(&mut conn, &all)?;
+    conn.execute("DELETE FROM outbox", []).map_err(|e| e.to_string())?;
     clean_unused(&conn, &[])?;
     compact(&conn)
+}
+
+/// Maintenance while the relay's policy applies: expire concealed copies the
+/// relay never sees and clean caches nothing references any more.
+fn follow_relay(db: &Db, retention_days: u32, now: i64) -> Result<u64, String> {
+    let removed = db.expire_concealed(now - i64::from(retention_days) * DAY).map_err(|e| e.to_string())?;
+    let conn = db.0.lock().unwrap();
+    let remaining = items(&conn)?;
+    clean_unused(&conn, &remaining)?;
+    if removed > 0 {
+        compact(&conn)?;
+    }
+    Ok(removed as u64)
 }
 
 #[cfg(test)]
@@ -495,6 +514,7 @@ mod tests {
                     height: None,
                     size: image_bytes as i64,
                     origin_device: None,
+                    concealed: false,
                 })
                 .unwrap();
             self.db()
@@ -730,6 +750,19 @@ mod tests {
     }
 
     #[test]
+    fn following_a_relay_expires_only_concealed_copies_and_cleans_caches() {
+        let f = Fixture::new();
+        f.add("old", DAY, 100);
+        f.add("secret", DAY, 0);
+        f.db().0.lock().unwrap().execute("UPDATE items SET concealed = 1 WHERE hash = 'secret'", []).unwrap();
+        std::fs::write(f.directory.join("images/orphan.png"), b"x").unwrap();
+        assert_eq!(follow_relay(f.db(), 30, 100 * DAY).unwrap(), 1);
+        assert_eq!(f.db().list("", 10).unwrap().len(), 1, "the relay decides about synced items");
+        assert!(f.directory.join("images/old.png").exists());
+        assert!(!f.directory.join("images/orphan.png").exists());
+    }
+
+    #[test]
     fn invalid_policy_does_not_delete_any_history() {
         let f = Fixture::new();
         f.add("old", 0, 0);
@@ -844,10 +877,18 @@ pub fn start(app: AppHandle) {
         .spawn(move || loop {
             let result = {
                 let db = app.state::<Db>();
-                let _files = db.1.lock().unwrap();
-                let policy = app.state::<SettingsStore>().get().retention;
-                let result = enforce(&mut db.0.lock().unwrap(), &policy, now_ms());
-                result
+                match app.state::<share::ShareState>().policy() {
+                    Some(policy) => follow_relay(&db, policy.retention_days, now_ms()).map(|removed| CleanupResult {
+                        removed,
+                        usage: Usage { bytes: 0, count: 0 },
+                    }),
+                    None => {
+                        let _files = db.1.lock().unwrap();
+                        let policy = app.state::<SettingsStore>().get().retention;
+                        let result = enforce(&mut db.0.lock().unwrap(), &policy, now_ms());
+                        result
+                    }
+                }
             };
             match result {
                 Ok(result) if result.removed > 0 => {
