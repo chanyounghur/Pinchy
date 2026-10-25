@@ -601,23 +601,25 @@ mod tests {
     fn retention_tombstones_old_untouched_and_oversized_items() {
         let (_dir, store) = store();
         let (a, _) = store.add_device(b"a").unwrap();
-        let day = 86_400_000;
+        let (day, hour, minute) = (86_400_000, 3_600_000, 60_000);
+        // The store stamps rows with the wall clock, so leave a minute of
+        // slack around every boundary for slow machines.
         let now = now_ms();
         store.put_item(&a, &id(1), b"old", false).unwrap();
         store.put_item(&a, &id(2), b"unfinished", true).unwrap();
-        assert_eq!(store.purge(now, 30 * day, 1 << 30, 3_600_000).unwrap(), 0);
-        assert_eq!(store.purge(now + 3_600_001, 30 * day, 1 << 30, 3_600_000).unwrap(), 1, "stale upload");
+        assert_eq!(store.purge(now + hour - minute, 30 * day, 1 << 30, hour).unwrap(), 0);
+        assert_eq!(store.purge(now + hour + minute, 30 * day, 1 << 30, hour).unwrap(), 1, "stale upload");
         store.put_item(&a, &id(3), b"touched", false).unwrap();
         // Bumping an item on another device keeps it alive.
         std::thread::sleep(std::time::Duration::from_millis(2));
         let later = now_ms();
         store.put_item(&a, &id(3), b"touched again", false).unwrap();
-        let removed = store.purge(later + 30 * day - 1, 30 * day, 1 << 30, 3_600_000).unwrap();
+        let removed = store.purge(later + 30 * day - 1, 30 * day, 1 << 30, hour).unwrap();
         assert_eq!(removed, 1, "only the untouched item expired");
         assert_eq!(feed(&store, 0).iter().filter(|(_, deleted)| !deleted).count(), 1);
         store.put_item(&a, &id(4), &[b'a'; 10], false).unwrap();
         store.put_item(&a, &id(5), &[b'b'; 10], false).unwrap();
-        assert_eq!(store.purge(now_ms(), 30 * day, 25, 3_600_000).unwrap(), 1, "oldest first until under the cap");
+        assert_eq!(store.purge(now_ms(), 30 * day, 25, hour).unwrap(), 1, "oldest first until under the cap");
         assert!(store.usage().unwrap().bytes <= 25);
         assert_eq!(store.usage().unwrap().items, 2);
         let live: Vec<String> = feed(&store, 0).into_iter().filter(|(_, d)| !d).map(|(id, _)| id).collect();
