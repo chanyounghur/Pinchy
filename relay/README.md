@@ -8,7 +8,7 @@ relay 1.0은 0.x의 우편함 방식과 호환되지 않습니다. 0.x 데이터
 
 ```bash
 curl https://<도메인>/health
-# {"service":"pinchy-relay","status":"ok","version":"0.1.0"}
+# {"service":"pinchy-relay","status":"ok","version":"1.0.0"}
 ```
 
 ## 실행
