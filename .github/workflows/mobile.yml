@@ -1,0 +1,201 @@
+name: Build phone apps and release
+
+on:
+  push:
+    tags:
+      - 'mobile-v*.*.*'
+  # Manual runs build downloadable artifacts only; they never publish a release.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mobile-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BUN_VERSION: '1.4.2'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Test release rules
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+      - name: Check tag and manifest versions
+        run: python3 scripts/check-mobile-release.py
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+      - uses: swatinem/rust-cache@49a0bdc70d2e1b713ca9e2869b211fcce03d3c1c # v2
+        with:
+          workspaces: relay -> target
+      - name: Install app dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: mobile
+        run: bun run typecheck
+      - name: Build relay for the protocol test
+        run: cargo build --manifest-path relay/Cargo.toml --locked
+      - name: Test protocol against the relay
+        working-directory: mobile
+        env:
+          PINCHY_RELAY_BIN: ${{ github.workspace }}/relay/target/debug/pinchy-relay
+        run: bun run test
+
+  android:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@8379f6a1328ee0e06e2bb424dadb7b159856a326 # v4
+      - name: Install app dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+      - name: Generate the Android project
+        working-directory: mobile
+        run: bunx expo prebuild --platform android --no-install
+      - name: Build release APK
+        working-directory: mobile/android
+        run: ./gradlew assembleRelease --no-daemon
+      - name: Sign with the release keystore
+        working-directory: mobile
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          test -f "$apk"
+          mkdir -p out
+          if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing; see mobile/README.md to create the release keystore."
+            exit 1
+          fi
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
+          "$tools/apksigner" sign --ks "$RUNNER_TEMP/release.jks" --ks-pass "pass:$ANDROID_KEYSTORE_PASSWORD" \
+            --ks-key-alias "$ANDROID_KEY_ALIAS" --key-pass "pass:$ANDROID_KEY_PASSWORD" \
+            --out "out/Pinchy-$version.apk" "$apk"
+          "$tools/apksigner" verify --print-certs "out/Pinchy-$version.apk"
+          rm -f "$RUNNER_TEMP/release.jks"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: phone-android
+          path: mobile/out/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install app dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+      - name: Generate the iOS project and install pods
+        working-directory: mobile
+        run: bunx expo prebuild --platform ios
+      - name: Archive without signing
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          xcodebuild -quiet -workspace ios/Pinchy.xcworkspace -scheme Pinchy -configuration Release \
+            -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Pinchy.xcarchive" archive \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
+          test -d "$RUNNER_TEMP/Pinchy.xcarchive/Products/Applications/Pinchy.app"
+      - name: Package the unsigned IPA
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          mkdir -p out "$RUNNER_TEMP/ipa/Payload"
+          cp -R "$RUNNER_TEMP/Pinchy.xcarchive/Products/Applications/Pinchy.app" "$RUNNER_TEMP/ipa/Payload/"
+          (cd "$RUNNER_TEMP/ipa" && zip -qry "$GITHUB_WORKSPACE/mobile/out/Pinchy-$version.ipa" Payload)
+          ls -la out
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: phone-ios
+          path: mobile/out/*.ipa
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    if: github.event_name == 'push'
+    needs: [android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: phone-*
+          path: release-assets
+          merge-multiple: true
+      - name: Write checksums
+        working-directory: release-assets
+        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#mobile-v}"
+          cat > release-notes.md <<NOTES
+          ## Pinchy 휴대폰 앱 $version
+
+          데스크톱 Pinchy 1.0 이상이 연결된 릴레이 서버의 히스토리를 폰에서 봅니다. 설치와 연결 방법은 [mobile/README.md](https://github.com/chanyounghur/Pinchy/blob/main/mobile/README.md)를 보세요.
+
+          - **iPhone**: \`Pinchy-$version.ipa\` (미서명). AltStore·SideStore에 소스 \`https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/altstore.json\`을 추가하면 목록에 나타나고, 설치할 때 내 Apple ID로 서명돼요.
+          - **Android**: \`Pinchy-$version.apk\`를 받아 설치해요. 이전 버전 위에 그대로 설치됩니다.
+          NOTES
+          gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft \
+            --title "Pinchy 휴대폰 $version" --notes-file release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --latest=false
+      - name: Update the AltStore source on main
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          version="${RELEASE_TAG#mobile-v}"
+          python3 scripts/altstore-source.py mobile/altstore.json "$version" "release-assets/Pinchy-$version.ipa" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mobile/altstore.json
+          git commit -m "chore(mobile): list $version in the AltStore source" || exit 0
+          git push origin HEAD:main

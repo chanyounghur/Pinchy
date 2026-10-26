@@ -1,0 +1,10 @@
+{
+  "blob_hex": "616263000102ff",
+  "envelope": "ypoIaa8onR9TWEgw8LhbaXAFzAdV+XUIfsuCud+hzmCRBUHj3QZwKYvGxyJkpomgyMN/rWEEmEKXUX/mTADA8BNGWNYb+nSWhOYPwJ/K4uL9znLvLhAhw0ritqCKY6Hfg4kkcIKbOqTlnvkO/IeqAs5+FxjKg1RpiPLYSi2DvhCU34Cr5sJBynNOo9aueKnyVPx+b0LZbLqfELg93PwSFTomiuI6CZkPia759Lyq5EGZGUjpyLw=",
+  "id": "0393e5db82dece4e5db1ab518cae09de",
+  "key": "8tAObGUKV8iZ8qOw1nsaU9QtjcN-5xO245TvEThcNEM",
+  "label": "내 아이폰",
+  "meta_json": "{\"v\":2,\"kind\":\"files\",\"files\":[{\"name\":\"a.txt\",\"size\":3},{\"name\":\"b.bin\",\"size\":4}],\"from\":\"집 맥\",\"app\":\"Finder\",\"copied_at\":1761400000000}",
+  "sealed_blob": "m+yEBv//HtlPNjs6nJVuAnM8s1nw0/YZw2JPZVgADogsR6v8WXK34AnDPMipkEw=",
+  "sealed_label": "aafRkxYU3gCinz+2SChDyi/UH/12ZE2fU3Z7nKqXxwqXPuoakQpXDTHkjnjsf2EubWg5tY4="
+}

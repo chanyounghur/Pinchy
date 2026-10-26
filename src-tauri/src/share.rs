@@ -1634,6 +1634,46 @@ mod tests {
         assert_eq!(other.open_label(&key.seal_label("집 맥")), None);
     }
 
+    /// Writes known-answer vectors for the phone app's TypeScript port of
+    /// `Key` (mobile/test/vectors.json). Run with
+    /// `cargo test --lib dump_mobile_vectors -- --ignored` after changing
+    /// the envelope format; the mobile tests open these with their own code.
+    #[test]
+    #[ignore]
+    fn dump_mobile_vectors() {
+        let key_text = generate_key();
+        let key = Key::parse(&key_text).unwrap();
+        let id = crate::db::new_sync_id();
+        let meta = Meta {
+            v: 2,
+            kind: "files".into(),
+            text: None,
+            files: Some(vec![FileMeta { name: "a.txt".into(), size: 3 }, FileMeta { name: "b.bin".into(), size: 4 }]),
+            from: Some("집 맥".into()),
+            app: Some("Finder".into()),
+            copied_at: Some(1_761_400_000_000),
+        };
+        let meta_json = serde_json::to_string(&meta).unwrap();
+        let blob = b"abc\x00\x01\x02\xff".to_vec();
+        let label = "내 아이폰";
+        let vectors = serde_json::json!({
+            "key": key_text,
+            "id": id,
+            "meta_json": meta_json,
+            "envelope": STANDARD.encode(key.seal("meta", &id, meta_json.as_bytes())),
+            "blob_hex": blob.iter().map(|b| format!("{b:02x}")).collect::<String>(),
+            "sealed_blob": STANDARD.encode(key.seal("blob", &id, &blob)),
+            "label": label,
+            "sealed_label": key.seal_label(label),
+        });
+        let out = std::env::var("PINCHY_VECTORS_OUT")
+            .map(PathBuf::from)
+            .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../mobile/test/vectors.json"));
+        std::fs::write(&out, serde_json::to_string_pretty(&vectors).unwrap()).unwrap();
+        // Round-trips through its own copy so a broken dump never ships.
+        assert_eq!(key.open("meta", &id, &STANDARD.decode(vectors["envelope"].as_str().unwrap()).unwrap()).unwrap(), meta_json.as_bytes());
+    }
+
     #[test]
     fn ids_keys_and_codes_have_the_expected_shape() {
         let id = crate::db::new_sync_id();
