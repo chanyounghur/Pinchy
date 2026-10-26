@@ -1,0 +1,41 @@
+{
+  "name": "Pinchy",
+  "identifier": "com.chanyounghur.pinchy.source",
+  "subtitle": "Pinchy 휴대폰 앱",
+  "description": "Pinchy 휴대폰 앱의 릴리즈. GitHub Actions가 매 릴리즈마다 갱신합니다.",
+  "iconURL": "https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/assets/icon.png",
+  "website": "https://github.com/chanyounghur/Pinchy",
+  "apps": [
+    {
+      "name": "Pinchy",
+      "bundleIdentifier": "com.chanyounghur.pinchy",
+      "developerName": "chanyounghur",
+      "subtitle": "모든 기기가 같은 클립보드 히스토리를",
+      "localizedDescription": "컴퓨터에서 복사한 것이 폰에도, 폰에서 공유한 것이 컴퓨터에도. Pinchy 데스크톱이 연결된 릴레이 서버의 히스토리를 폰에서 보고, 탭해서 복사하고, 공유 시트로 올립니다. 내용은 기기에서 암호화되어 서버는 읽지 못합니다.",
+      "iconURL": "https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/assets/icon.png",
+      "tintColor": "#ff6652",
+      "category": "utilities",
+      "screenshots": [],
+      "versions": [
+        {
+          "version": "1.0.0",
+          "buildVersion": "10000",
+          "date": "2026-10-26T12:41:45Z",
+          "localizedDescription": "Pinchy 1.0.0. 변경 내용: https://github.com/chanyounghur/Pinchy/releases/tag/mobile-v1.0.0",
+          "downloadURL": "https://github.com/chanyounghur/Pinchy/releases/download/mobile-v1.0.0/Pinchy-1.0.0.ipa",
+          "size": 14911786,
+          "minOSVersion": "16.4"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [
+          "com.apple.security.application-groups"
+        ],
+        "privacy": {
+          "NSCameraUsageDescription": "데스크톱 Pinchy의 QR을 찍어 연결할 때만 카메라를 써요."
+        }
+      }
+    }
+  ],
+  "news": []
+}
