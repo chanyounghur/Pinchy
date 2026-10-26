@@ -32,7 +32,7 @@ class ManifestTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             dist = fake_export(root)
             out = Path(root) / "out"
-            manifest = expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "mobile-v1.0.1", "2026-10-26T00:00:00Z", {"name": "Pinchy"})
+            manifest = expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "mobile-v1.0.1", "2026-10-26T00:00:00.000Z", {"name": "Pinchy"})
             bundle_hash = hashlib.sha256(b"bundle")
             self.assertEqual(manifest["runtimeVersion"], "1")
             self.assertEqual(manifest["launchAsset"]["url"], f"https://github.com/o/r/releases/download/mobile-v1.0.1/{bundle_hash.hexdigest()}.hbc")
@@ -46,15 +46,18 @@ class ManifestTests(unittest.TestCase):
             written = json.loads((out / "updates/1/ios/manifest.json").read_text())
             self.assertEqual(written, manifest)
             self.assertFalse((out / "updates/1/ios/manifest.sig").exists(), "unsigned without a key")
-            again = expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "mobile-v1.0.1", "2026-10-27T00:00:00Z", {})
+            again = expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "mobile-v1.0.1", "2026-10-27T00:00:00.000Z", {})
             self.assertEqual(again["id"], manifest["id"], "the id depends on runtime, platform and version only")
-            self.assertNotEqual(expo_update.write_update(dist, out, "ios", "1.0.2", "1", "o/r", "t", "d", {})["id"], manifest["id"])
+            self.assertNotEqual(expo_update.write_update(dist, out, "ios", "1.0.2", "1", "o/r", "t", "2026-10-26T00:00:00.000Z", {})["id"], manifest["id"])
 
     def test_missing_platform_is_an_error(self):
         with tempfile.TemporaryDirectory() as root:
             dist = fake_export(root)
             with self.assertRaises(ValueError):
-                expo_update.write_update(dist, Path(root) / "out", "android", "1.0.1", "1", "o/r", "t", "d", {})
+                expo_update.write_update(dist, Path(root) / "out", "android", "1.0.1", "1", "o/r", "t", "2026-10-26T00:00:00.000Z", {})
+            with self.assertRaises(ValueError, msg="iOS needs milliseconds in createdAt"):
+                expo_update.write_update(dist, Path(root) / "out", "ios", "1.0.1", "1", "o/r", "t", "2026-10-26T00:00:00Z", {})
+            self.assertRegex(expo_update.now_created_at(), expo_update.CREATED_AT)
 
     @unittest.skipUnless(shutil.which("openssl"), "openssl not installed")
     def test_signature_verifies_with_the_public_key(self):
@@ -65,7 +68,7 @@ class ManifestTests(unittest.TestCase):
             subprocess.run(["openssl", "rsa", "-in", str(key), "-pubout", "-out", str(public)], check=True, capture_output=True)
             dist = fake_export(root)
             out = Path(root) / "out"
-            expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "t", "d", {}, key.read_bytes())
+            expo_update.write_update(dist, out, "ios", "1.0.1", "1", "o/r", "t", "2026-10-26T00:00:00.000Z", {}, key.read_bytes())
             body = (out / "updates/1/ios/manifest.json").read_bytes()
             signature = base64.b64decode((out / "updates/1/ios/manifest.sig").read_text())
             sig_file = Path(root) / "sig.bin"

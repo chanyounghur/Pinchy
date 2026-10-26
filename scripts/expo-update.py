@@ -13,6 +13,7 @@ import hashlib
 import json
 import mimetypes
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
@@ -72,7 +73,18 @@ def sign(body, key_pem):
     return base64.b64encode(signature).decode("ascii")
 
 
+CREATED_AT = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z")
+
+
+def now_created_at():
+    """UTC with milliseconds: the only shape iOS (RCTConvert) parses."""
+    import datetime
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.") + "000Z"
+
+
 def write_update(dist, out, platform, version, runtime, repo, tag, created_at, expo_config, key_pem=None):
+    if not CREATED_AT.fullmatch(created_at):
+        raise ValueError(f"createdAt must look like 2026-10-26T12:19:05.000Z (iOS crashes on anything else), got {created_at}")
     download_base = f"https://github.com/{repo}/releases/download/{tag}"
     manifest = build_manifest(dist, out, platform, version, runtime, download_base, created_at, expo_config)
     folder = Path(out) / "updates" / runtime / platform
@@ -86,7 +98,6 @@ def write_update(dist, out, platform, version, runtime, repo, tag, created_at, e
 
 if __name__ == "__main__":
     import argparse
-    import datetime
     import os
 
     parser = argparse.ArgumentParser()
@@ -97,7 +108,7 @@ if __name__ == "__main__":
     parser.add_argument("--tag", required=True)
     parser.add_argument("--repo", required=True)
     parser.add_argument("--config", required=True, help="output of `expo config --type public --json`")
-    parser.add_argument("--date", default=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+    parser.add_argument("--date", default=now_created_at(), help="RFC 3339 UTC with milliseconds")
     parser.add_argument("--key", help="PEM private key; or set EXPO_UPDATES_PRIVATE_KEY to its contents")
     args = parser.parse_args()
     key_pem = Path(args.key).read_bytes() if args.key else os.environ.get("EXPO_UPDATES_PRIVATE_KEY", "").encode()
