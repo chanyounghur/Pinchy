@@ -90,8 +90,13 @@ jobs:
           test -f "$apk"
           mkdir -p out
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing; see mobile/README.md to create the release keystore."
-            exit 1
+            if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 secret is missing; see mobile/README.md to create the release keystore."
+              exit 1
+            fi
+            echo "::warning::No release keystore; the manual build keeps the debug signature and will not update a release install."
+            cp "$apk" "out/Pinchy-$version-debugsigned.apk"
+            exit 0
           fi
           echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
           tools="$ANDROID_HOME/build-tools/$(ls "$ANDROID_HOME/build-tools" | sort -V | tail -1)"
