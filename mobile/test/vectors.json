@@ -1,10 +1,10 @@
 {
   "blob_hex": "616263000102ff",
-  "envelope": "ypoIaa8onR9TWEgw8LhbaXAFzAdV+XUIfsuCud+hzmCRBUHj3QZwKYvGxyJkpomgyMN/rWEEmEKXUX/mTADA8BNGWNYb+nSWhOYPwJ/K4uL9znLvLhAhw0ritqCKY6Hfg4kkcIKbOqTlnvkO/IeqAs5+FxjKg1RpiPLYSi2DvhCU34Cr5sJBynNOo9aueKnyVPx+b0LZbLqfELg93PwSFTomiuI6CZkPia759Lyq5EGZGUjpyLw=",
-  "id": "0393e5db82dece4e5db1ab518cae09de",
-  "key": "8tAObGUKV8iZ8qOw1nsaU9QtjcN-5xO245TvEThcNEM",
+  "envelope": "qmJsTNxE++e8TPekwvE+GNjRUdkkpewDNjJDL8hDioGuMCRx17sPW1dDraltOeT7jkyaqa1O6V/A4Xyk7rZBA0aVIA9en/8V0K0iWpH2x2gywg+wh2x/c9QtoJ247qD3R2Yzx+iFyiIXoKd/NStzQzLWL2BV3BWOu+dto4F2FkbrISjN3akCODO9BXSZm4nisD5wQYER1G2i7wC9CKcRuS9s+Yuvp3IHkRf2biplA72qNy+Ht3SYj64SjIYfKuI779PZwHa+sYA=",
+  "id": "d8914f99c08377470f662fb30f6c5a92",
+  "key": "W_47EIZgtN8cbsoW6dcM_qAFH3zb6c97So7Et0eefJ0",
   "label": "내 아이폰",
-  "meta_json": "{\"v\":2,\"kind\":\"files\",\"files\":[{\"name\":\"a.txt\",\"size\":3},{\"name\":\"b.bin\",\"size\":4}],\"from\":\"집 맥\",\"app\":\"Finder\",\"copied_at\":1761400000000}",
-  "sealed_blob": "m+yEBv//HtlPNjs6nJVuAnM8s1nw0/YZw2JPZVgADogsR6v8WXK34AnDPMipkEw=",
-  "sealed_label": "aafRkxYU3gCinz+2SChDyi/UH/12ZE2fU3Z7nKqXxwqXPuoakQpXDTHkjnjsf2EubWg5tY4="
+  "meta_json": "{\"v\":2,\"kind\":\"files\",\"files\":[{\"name\":\"a.txt\",\"size\":3},{\"name\":\"b.bin\",\"size\":4}],\"from\":\"집 맥\",\"app\":\"Finder\",\"copied_at\":1761400000000,\"color\":\"#3b5bdb\"}",
+  "sealed_blob": "XXjiWzK5TISxE28buKF9huFuNGWdr0ldUIZPdBURDeTKqsM4I9EkiBQvi0Q9hdU=",
+  "sealed_label": "ExRRF7MFP8Xdc37JzaeTS0/FpIRTogRRLgDQ+34jnMVDwc9eACalS2lbfKHJkPWOl6D+eog="
 }

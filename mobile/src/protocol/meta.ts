@@ -20,6 +20,8 @@ export interface Meta {
   app?: string;
   /// When it was last copied, ms since the epoch.
   copied_at?: number;
+  /// The app's card color (`#rrggbb`) as the copying device shows it.
+  color?: string;
 }
 
 export const META_VERSION = 2;
@@ -34,6 +36,7 @@ export function encodeMeta(meta: Meta): Uint8Array {
   if (meta.from !== undefined) clean.from = meta.from;
   if (meta.app !== undefined) clean.app = meta.app;
   if (meta.copied_at !== undefined) clean.copied_at = meta.copied_at;
+  if (meta.color !== undefined) clean.color = meta.color;
   return encoder.encode(JSON.stringify(clean));
 }
 
@@ -63,8 +66,11 @@ export function decodeMeta(bytes: Uint8Array): Meta | null {
   if (typeof r.from === "string") meta.from = r.from;
   if (typeof r.app === "string") meta.app = r.app;
   if (typeof r.copied_at === "number") meta.copied_at = r.copied_at;
+  if (typeof r.color === "string" && HEX_COLOR.test(r.color.trim())) meta.color = r.color.trim().toLowerCase();
   return meta;
 }
+
+const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
 
 /// Splits a files blob back into its parts. Null when the sizes do not add
 /// up to the blob.

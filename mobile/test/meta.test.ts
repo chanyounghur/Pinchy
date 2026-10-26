@@ -5,8 +5,10 @@ import { parseJoinLink } from "../src/protocol/join";
 import { normalizeServer } from "../src/protocol/relay";
 
 test("meta round-trips and drops unknown or malformed fields", () => {
-  const meta = { v: 2, kind: "text", text: "hi", from: "집 맥", copied_at: 5 };
+  const meta = { v: 2, kind: "text", text: "hi", from: "집 맥", copied_at: 5, color: "#3b5bdb" };
   assert.deepEqual(decodeMeta(encodeMeta(meta)), meta);
+  assert.equal(decodeMeta(new TextEncoder().encode('{"v":2,"kind":"text","text":"x","color":"red"}'))?.color, undefined, "only #rrggbb");
+  assert.equal(decodeMeta(new TextEncoder().encode('{"v":2,"kind":"text","text":"x","color":" #ABCDEF "}'))?.color, "#abcdef");
   const json = new TextDecoder().decode(encodeMeta({ v: 2, kind: "image", app: undefined }));
   assert.equal(json, '{"v":2,"kind":"image"}', "undefined fields are omitted like serde's skip_serializing_if");
   assert.equal(decodeMeta(new TextEncoder().encode("nope")), null);

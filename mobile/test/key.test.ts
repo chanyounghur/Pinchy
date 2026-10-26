@@ -31,6 +31,7 @@ test("opens envelopes, blobs and labels sealed by the desktop", () => {
   const parsed = decodeMeta(meta);
   assert.equal(parsed?.kind, "files");
   assert.equal(parsed?.from, "집 맥");
+  assert.equal(parsed?.color, "#3b5bdb");
   assert.deepEqual(parsed?.files, [
     { name: "a.txt", size: 3 },
     { name: "b.bin", size: 4 },

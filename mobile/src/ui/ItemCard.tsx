@@ -17,7 +17,7 @@ export function ItemCard({ item, onPress, onLongPress, full = false }: { item: I
   useEffect(() => {
     if (needsBlob && engine) void engine.ensureBlob(item.id);
   }, [needsBlob, engine, item.id]);
-  const color = appColor(item.app);
+  const color = item.color ?? appColor(item.app);
   return (
     <Pressable
       onPress={onPress}

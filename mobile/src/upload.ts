@@ -76,6 +76,7 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
     files: files ?? null,
     from: deviceName,
     app: draft.app ?? null,
+    color: null,
     copied_at: now,
     updated_at: now,
     blob_size: blob?.length ?? null,

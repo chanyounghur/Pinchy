@@ -314,6 +314,10 @@ struct Meta {
     /// When it was last copied, ms since the epoch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     copied_at: Option<i64>,
+    /// The app's card color (`#rrggbb`), taken from its icon on the device
+    /// that copied it, so every device shows the same color.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    color: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -434,6 +438,13 @@ fn split_extension(name: &str) -> (&str, &str) {
 }
 
 /// Trims a device name and caps its length; empty means none.
+/// Accepts only `#rrggbb`, the form the icon cache produces.
+fn clean_color(color: &str) -> Option<String> {
+    let color = color.trim();
+    let hex = color.strip_prefix('#')?;
+    (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| color.to_ascii_lowercase())
+}
+
 fn clean_name(name: &str) -> Option<String> {
     let name: String = name.trim().chars().take(MAX_NAME_CHARS).collect();
     let name = name.trim().to_string();
@@ -906,6 +917,7 @@ impl Relay {
             from,
             app: item.source_app.clone(),
             copied_at: Some(item.created_at),
+            color: item.app_color.as_deref().and_then(clean_color),
         };
         let (meta, blob) = match item.kind.as_str() {
             "text" | "link" => (Meta { text: Some(item.content.clone()), ..base }, None),
@@ -999,7 +1011,7 @@ impl Relay {
             }
             (kind, _, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
         };
-        Ok(Opened { from, app, copied_at, content })
+        Ok(Opened { from, app, copied_at, color: meta.color.as_deref().and_then(clean_color), content })
     }
 
     fn blob(&self, id: &str) -> Result<Vec<u8>, ReceiveError> {
@@ -1030,13 +1042,16 @@ struct Opened {
     from: String,
     app: Option<String>,
     copied_at: i64,
+    /// The card color the copying device chose, when it sent one.
+    color: Option<String>,
     content: Content,
 }
 
 impl Opened {
     /// Builds the local row. Items first copied on this device keep their
     /// own look; others show the app they came from when it is installed
-    /// here too, else the device they came from.
+    /// here too, else the color the copying device sent, else the device
+    /// they came from.
     fn into_item(self, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
@@ -1050,7 +1065,7 @@ impl Opened {
                 item.app_icon = look.icon;
                 item.app_color = look.color;
             }
-            None => item.app_color = Some(RECEIVED_COLOR.into()),
+            None => item.app_color = Some(self.color.unwrap_or_else(|| RECEIVED_COLOR.into())),
         }
         if own_name != Some(self.from.as_str()) {
             item.origin_device = Some(self.from);
@@ -1652,6 +1667,7 @@ mod tests {
             from: Some("집 맥".into()),
             app: Some("Finder".into()),
             copied_at: Some(1_761_400_000_000),
+            color: Some("#3b5bdb".into()),
         };
         let meta_json = serde_json::to_string(&meta).unwrap();
         let blob = b"abc\x00\x01\x02\xff".to_vec();
@@ -1742,13 +1758,14 @@ mod tests {
         let text = Meta {
             v: 2, kind: "text".into(), text: Some("안녕".into()), files: None,
             from: Some("집 맥".into()), app: Some("Notes".into()), copied_at: Some(1_700_000_000_000),
+            color: Some("#1f8fff".into()),
         };
-        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None };
+        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None, color: None };
         assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":2,"kind":"image"}"#);
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&text).unwrap()).unwrap();
         assert_eq!(restored, text);
         let files = Meta {
-            v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None,
+            v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None, color: None,
             files: Some(vec![FileMeta { name: "보고서.pdf".into(), size: 3 }]),
         };
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&files).unwrap()).unwrap();
