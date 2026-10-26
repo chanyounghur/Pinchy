@@ -73,7 +73,7 @@ export default function History() {
       : status.state === "syncing"
         ? status.initial
           ? "처음 받는 중…"
-          : "받는 중…"
+          : "동기화 중…"
         : status.state === "offline"
           ? "오프라인"
           : status.state === "unauthorized"

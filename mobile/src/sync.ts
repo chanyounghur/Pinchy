@@ -93,6 +93,10 @@ export class SyncEngine {
           since = await this.pullAll(since);
           await this.db.setSync(INITIAL_DONE, "1");
           this.emit("items");
+        } else if (this.status.state !== "live") {
+          // Back from offline, the background or a fresh start: catch up on
+          // what happened meanwhile before claiming to be in sync.
+          since = await this.pullAll(since);
         }
         this.setStatus({ state: "live" });
         failures = 0;
@@ -130,6 +134,8 @@ export class SyncEngine {
     let since = from;
     for (;;) {
       const page = await this.relay.changes(since, 0);
+      // Only once a request has succeeded, so a dead network keeps showing offline.
+      if (this.status.state !== "syncing") this.setStatus({ state: "syncing", initial: false });
       if (page === "reset") {
         await this.reset();
         since = 0;

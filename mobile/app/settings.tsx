@@ -97,7 +97,9 @@ export default function Settings() {
     status.state === "live"
       ? "동기화됨"
       : status.state === "syncing"
-        ? "받는 중…"
+        ? status.initial
+          ? "처음 받는 중…"
+          : "동기화 중…"
         : status.state === "offline"
           ? `오프라인 · ${status.message}`
           : status.state === "unauthorized"
