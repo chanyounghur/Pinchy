@@ -36,6 +36,24 @@ IPA는 서명되어 있지 않으며, 설치하는 사람의 Apple ID로 서명�
 
 집 밖에서도 재서명이 되게 하려면 [SideStore](https://sidestore.io)를 쓰면 됩니다. 소스 주소는 같습니다. 무료 계정은 동시에 앱 3개까지만 서명할 수 있고(AltStore 자체 포함), 사이드로딩에 쓰는 Apple ID가 가끔 보안 잠금을 받는 사례가 있으니 전용 Apple ID를 하나 만들어 쓰는 편이 안전합니다. 다른 앱에서 공유 시트로 보내는 기능은 앱 안의 확장(share extension)이 함께 서명되어야 하므로, AltStore가 확장을 포함해 설치하겠는지 물으면 **포함**을 고르세요.
 
+## 업데이트
+
+앱은 열릴 때(그리고 10분에 한 번, 다시 포그라운드로 올 때) 릴레이의 `/updates/manifest`에서 새 JavaScript 번들을 확인합니다. 받아 두면 "새 버전을 받았어요" 토스트가 뜨고 다음에 앱을 열 때 적용되며, 설정 → 앱에서 바로 적용할 수도 있습니다. 그래서 화면과 로직 수정은 릴리즈만 하면 폰에 알아서 들어가고, 네이티브가 바뀌는 릴리즈(새 플러그인, 권한, `runtimeVersion` 변경)만 APK·IPA를 다시 설치하면 됩니다.
+
+흐름은 이렇습니다. 릴리즈 워크플로가 `expo export`로 번들을 뽑아 릴리즈 에셋으로 올리고, 그 주소를 담은 manifest를 서명해 `mobile/updates/<런타임>/<플랫폼>/`에 커밋합니다. 릴레이는 그 manifest를 GitHub에서 받아 5분 캐시로 폰에 전달합니다. 폰은 앱에 들어 있는 인증서로 서명을 확인하고 번들은 GitHub에서 직접 받습니다. 릴레이에는 서명 키가 없어서 번들을 바꿔치기할 수 없습니다.
+
+### 업데이트 서명 키 (한 번만)
+
+```bash
+cd mobile
+bunx expo-updates codesigning:generate --key-output-directory keys --certificate-output-directory certs \
+  --certificate-validity-duration-years 20 --certificate-common-name "Pinchy"
+cat keys/private-key.pem | pbcopy      # → GitHub Secret EXPO_UPDATES_PRIVATE_KEY
+git add certs/certificate.pem           # 인증서는 커밋, keys/는 .gitignore
+```
+
+`certs/certificate.pem`이 커밋된 뒤 만든 APK·IPA는 서명된 업데이트만 받습니다. 그 전에 만든 빌드는 서명을 확인하지 않습니다. 개인키 파일은 따로 백업하고, 바뀌면 인증서도 함께 바꿔 새 바이너리를 배포해야 합니다.
+
 ## 개발
 
 [Bun](https://bun.sh)과 Node 22가 필요합니다. 네이티브 모듈을 쓰므로 Expo Go로는 실행할 수 없고 개발 빌드가 필요합니다.
@@ -53,13 +71,14 @@ bunx expo run:android        # Android Studio 또는 연결된 폰
 - `src/protocol/`: 데스크톱 `src-tauri/src/share.rs`와 같은 암호화와 릴레이 API. `test/vectors.json`은 Rust 쪽에서 `cargo test --lib dump_mobile_vectors -- --ignored`로 만든 알려진 답이고, TS 구현이 그것을 열 수 있어야 합니다.
 - `src/sync.ts`: 변경 피드를 따라가는 동기화 엔진. 첫 연결에 전체를 받고 이후 롱폴, 409면 처음부터 다시.
 - `src/store/`: SQLite 캐시(`db.ts`)와 보안 저장소의 세션(`session.ts`).
+- `src/updates.ts`: expo-updates 연결. 조인한 릴레이를 업데이트 주소로 쓰고, 포그라운드마다 확인.
 - `app/`: expo-router 화면. `index`(히스토리), `join`(QR), `item/[id]`, `settings`, `add`(올리기 시트).
 
 ## 릴리즈
 
-`mobile-vX.Y.Z` 태그를 푸시하면 GitHub Actions가 Android APK와 미서명 iOS IPA를 만들어 릴리즈에 올리고, `mobile/altstore.json`에 새 버전을 추가해 `main`에 커밋합니다.
+`mobile-vX.Y.Z` 태그를 푸시하면 GitHub Actions가 Android APK, 미서명 iOS IPA, 서명한 OTA 업데이트를 만들어 릴리즈에 올리고, `mobile/altstore.json`과 `mobile/updates/`를 갱신해 `main`에 커밋합니다. 같은 런타임의 기존 설치는 OTA로, 새 설치는 APK·IPA로 그 버전을 받습니다.
 
-1. `mobile/package.json`과 `mobile/app.json`의 버전을 맞춥니다. 빌드 번호는 `app.config.js`가 버전에서 계산합니다(1.2.3 → 10203).
+1. `mobile/package.json`과 `mobile/app.json`의 버전을 맞춥니다. 빌드 번호는 `app.config.js`가 버전에서 계산합니다(1.2.3 → 10203). 네이티브가 바뀌었으면 `app.json`의 `runtimeVersion`도 올립니다. 그러면 이전 런타임의 설치본은 더 이상 OTA를 받지 않으니 다시 설치해야 합니다.
 2. 커밋해서 `main`에 푸시합니다.
 3. `git tag mobile-v1.0.0 && git push origin mobile-v1.0.0`
 

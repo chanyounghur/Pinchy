@@ -39,6 +39,8 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 | `--max-storage-mb` | `PINCHY_RELAY_MAX_STORAGE_MB` | 히스토리 최대 용량. 넘으면 오래된 항목부터 삭제. 기본값 1,024MB |
 | `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 64MB. Pinchy는 파일을 한 번에 50MB까지 올리므로 그보다 크게 두세요 |
 | `--sync-concealed` | `PINCHY_RELAY_SYNC_CONCEALED` | 비밀번호 관리자처럼 원본 앱이 "숨김"으로 표시한 복사도 동기화. 기본값 꺼짐. 서버는 내용을 볼 수 없으므로 각 기기가 복사 시점에 이 설정을 따릅니다 |
+| `--updates-source` | `PINCHY_RELAY_UPDATES_SOURCE` | 휴대폰 앱의 OTA 업데이트 manifest를 가져올 곳. 기본값은 이 저장소 `main`의 `mobile/updates`. 릴리즈 워크플로가 서명해 올린 manifest를 5분 캐시로 전달하며, 릴레이는 서명 키가 없어 내용을 바꿀 수 없습니다 |
+| `--no-updates` | `PINCHY_RELAY_NO_UPDATES` | 휴대폰 앱 업데이트를 내려주지 않음 |
 
 ### 보관 정리
 
@@ -99,6 +101,7 @@ grep 'first device code' ~/Library/Application\ Support/pinchy-relay/relay.log |
 | `DELETE /v1/items/{id}` | 토큰 | 항목을 모든 기기에서 삭제 |
 | `DELETE /v1/items` | 토큰 | 히스토리 전체 삭제 |
 | `GET /v1/changes?since=0&wait=25&limit=200` | 토큰 | `since` 이후 바뀐 항목(삭제 포함)을 순서대로. 응답의 `next`를 다음 `since`로 쓰고, `more`가 참이면 바로 이어서 요청. 비어 있으면 최대 `wait`초(최대 30) 기다림. `since`가 너무 오래됐으면 409이며 0부터 다시 받아야 함 |
+| `GET /updates/manifest` | 토큰 | 휴대폰 앱의 OTA 업데이트 manifest(expo-updates 프로토콜 1). 요청 헤더 `expo-platform`, `expo-runtime-version`에 맞는 manifest를 `expo-protocol-version: 1`과 릴리즈 서명 `expo-signature`와 함께 돌려줌. 없으면 404 |
 
 ## macOS 상시 실행
 

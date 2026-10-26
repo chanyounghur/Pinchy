@@ -13,6 +13,8 @@ expo-env.d.ts
 *.p8
 *.p12
 *.key
+# The expo-updates signing key lives in GitHub Secrets, never here.
+/keys/
 *.mobileprovision
 
 .DS_Store

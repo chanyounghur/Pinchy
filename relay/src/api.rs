@@ -6,6 +6,7 @@
 
 use crate::pairing::{Answer, Joining, PairingError};
 use crate::store::{valid_item_id, Device, PutError, PutOutcome, Store};
+use crate::updates::Updates;
 use axum::{
     body::Body,
     extract::{ConnectInfo, DefaultBodyLimit, Path, Query, State},
@@ -60,18 +61,21 @@ pub struct AppState {
     pub limits: Limits,
     pub policy: Policy,
     pub joining: Joining,
+    /// Phone app updates, when this relay serves them.
+    pub updates: Option<Updates>,
     /// Wakes long-polling change requests when the feed grows.
     changed: broadcast::Sender<()>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
 }
 
 impl AppState {
-    pub fn new(store: Store, limits: Limits, policy: Policy) -> Arc<Self> {
+    pub fn new(store: Store, limits: Limits, policy: Policy, updates: Option<Updates>) -> Arc<Self> {
         Arc::new(AppState {
             store,
             limits,
             policy,
             joining: Joining::default(),
+            updates,
             changed: broadcast::channel(16).0,
             failures: Mutex::default(),
         })
@@ -605,6 +609,42 @@ async fn download_blob(
         .into_response())
 }
 
+/// The phone app's update manifest (expo-updates protocol 1). The phone
+/// says which platform and runtime it is; the signature made at release
+/// time rides along in the header expo-updates verifies against the
+/// certificate built into the app.
+async fn update_manifest(
+    State(state): State<Arc<AppState>>,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    auth(&state, &headers, addr.ip())?;
+    let Some(updates) = &state.updates else {
+        return Err(ApiError(StatusCode::NOT_FOUND, "this relay does not serve app updates"));
+    };
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or("").trim().to_string();
+    let manifest = match updates.manifest(&header("expo-runtime-version"), &header("expo-platform")).await {
+        Ok(Some(manifest)) => manifest,
+        Ok(None) => return Err(ApiError(StatusCode::NOT_FOUND, "no update for this app")),
+        Err(e) => {
+            eprintln!("[pinchy-relay] cannot fetch the app update manifest: {e}");
+            return Err(ApiError(StatusCode::BAD_GATEWAY, "update source unreachable"));
+        }
+    };
+    let mut response = Response::new(Body::from(manifest.body.clone()));
+    let h = response.headers_mut();
+    h.insert(header::CONTENT_TYPE, "application/json; charset=utf-8".parse().unwrap());
+    h.insert(header::CACHE_CONTROL, "private, max-age=0".parse().unwrap());
+    h.insert("expo-protocol-version", "1".parse().unwrap());
+    h.insert("expo-sfv-version", "0".parse().unwrap());
+    if let Some(signature) = &manifest.signature {
+        if let Ok(value) = format!("sig=\"{signature}\", keyid=\"main\"").parse() {
+            h.insert("expo-signature", value);
+        }
+    }
+    Ok(response)
+}
+
 pub fn router(state: Arc<AppState>) -> Router {
     // Base64 inflates the envelope by a third, plus room for the JSON wrapper.
     let json_limit = state.limits.max_envelope_bytes / 3 * 4 + 1024;
@@ -627,6 +667,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/v1/items/{id}", put(put_item).delete(delete_item).layer(DefaultBodyLimit::max(json_limit)))
         .route("/v1/items/{id}/blob", put(upload_blob).get(download_blob).layer(DefaultBodyLimit::disable()))
         .route("/v1/changes", get(changes))
+        .route("/updates/manifest", get(update_manifest))
         .with_state(state)
 }
 
@@ -647,7 +688,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::open(dir.path()).unwrap();
         let policy = Policy { retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed: false };
-        let state = AppState::new(store, Limits { max_envelope_bytes: 1024, max_blob_bytes: 16 }, policy);
+        let state = AppState::new(store, Limits { max_envelope_bytes: 1024, max_blob_bytes: 16 }, policy, None);
         let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([203, 0, 113, 7], 1000))));
         Fixture { _dir: dir, app, state }
     }
@@ -946,5 +987,47 @@ mod tests {
         assert_eq!(call(&f.app, "DELETE", &format!("/v1/devices/{}", a_dev.id), &a, Body::empty()).await.0, 204);
         assert_eq!(call(&f.app, "GET", "/v1/me", &a, Body::empty()).await.0, 401, "removed itself");
         assert!(f.state.joining.refresh_first_code(0).is_none(), "already issued on removal");
+    }
+
+    #[tokio::test]
+    async fn update_manifests_are_served_to_devices_with_expo_headers() {
+        // A stand-in for the repository that holds one signed ios manifest.
+        let source = Router::new()
+            .route("/u/1/ios/manifest.json", get(|| async { r#"{"id":"m"}"# }))
+            .route("/u/1/ios/manifest.sig", get(|| async { "c2ln" }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, source).await.unwrap() });
+
+        let dir = tempfile::tempdir().unwrap();
+        let policy = Policy { retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed: false };
+        let updates = Updates::new(&format!("http://{addr}/u")).unwrap();
+        let state = AppState::new(Store::open(dir.path()).unwrap(), Limits { max_envelope_bytes: 1024, max_blob_bytes: 16 }, policy, Some(updates));
+        let app = router(state.clone()).layer(MockConnectInfo(SocketAddr::from(([203, 0, 113, 7], 1000))));
+        let (_, token) = state.store.add_device(b"phone").unwrap();
+
+        let request = |platform: &'static str, token: &'static str| {
+            Request::builder()
+                .method("GET")
+                .uri("/updates/manifest")
+                .header(header::AUTHORIZATION, format!("Bearer {token}"))
+                .header("expo-platform", platform)
+                .header("expo-runtime-version", "1")
+                .body(Body::empty())
+                .unwrap()
+        };
+        let token: &'static str = Box::leak(token.into_boxed_str());
+        let response = app.clone().oneshot(request("ios", token)).await.unwrap();
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.headers()["expo-protocol-version"], "1");
+        assert_eq!(response.headers()["expo-signature"], "sig=\"c2ln\", keyid=\"main\"");
+        assert_eq!(response.headers()[header::CONTENT_TYPE], "application/json; charset=utf-8");
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(&body[..], br#"{"id":"m"}"#);
+        assert_eq!(app.clone().oneshot(request("android", token)).await.unwrap().status(), 404, "nothing published for android");
+        assert_eq!(app.clone().oneshot(request("ios", "nope")).await.unwrap().status(), 401, "updates need a device token");
+
+        let plain = fixture();
+        assert_eq!(plain.app.clone().oneshot(request("ios", token)).await.unwrap().status(), 401);
     }
 }

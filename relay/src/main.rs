@@ -9,6 +9,7 @@
 mod api;
 mod pairing;
 mod store;
+mod updates;
 
 use clap::Parser;
 use rustls_acme::{caches::DirCache, AcmeConfig};
@@ -70,6 +71,21 @@ struct Args {
     /// enforce it, since the relay cannot read what it stores.
     #[arg(long, env = "PINCHY_RELAY_SYNC_CONCEALED")]
     sync_concealed: bool,
+
+    /// Where the phone app's over-the-air update manifests are published:
+    /// the directory that holds `<runtime>/<platform>/manifest.json`. The
+    /// release workflow writes them to the repository; the relay only
+    /// forwards them, signed by the release key, to connected phones.
+    #[arg(
+        long,
+        env = "PINCHY_RELAY_UPDATES_SOURCE",
+        default_value = "https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/updates"
+    )]
+    updates_source: String,
+
+    /// Do not serve phone app updates at all.
+    #[arg(long, env = "PINCHY_RELAY_NO_UPDATES")]
+    no_updates: bool,
 }
 
 fn default_data_dir() -> PathBuf {
@@ -105,9 +121,20 @@ async fn main() {
             max_blob_mb: args.max_blob_mb,
             sync_concealed: args.sync_concealed,
         },
+        if args.no_updates {
+            None
+        } else {
+            Some(updates::Updates::new(&args.updates_source).unwrap_or_else(|e| {
+                eprintln!("[pinchy-relay] cannot set up the update client: {e}");
+                std::process::exit(2);
+            }))
+        },
     );
     if args.sync_concealed {
         eprintln!("[pinchy-relay] concealed copies (password managers) are synced");
+    }
+    if args.no_updates {
+        eprintln!("[pinchy-relay] phone app updates are not served");
     }
     let retention_ms = i64::from(args.retention_days) * DAY_MS;
     let max_bytes = (args.max_storage_mb * 1024 * 1024) as i64;

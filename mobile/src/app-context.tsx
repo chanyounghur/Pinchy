@@ -12,6 +12,7 @@ import { Db, type Item } from "./store/db";
 import { clearSession, defaultDeviceName, loadSession, saveSession, type Session } from "./store/session";
 import { SyncEngine, type SyncStatus } from "./sync";
 import { removeAllBlobs } from "./blobs";
+import { checkForUpdate, configureUpdates, type UpdateCheck } from "./updates";
 
 const random = (n: number) => Crypto.getRandomBytes(n);
 const fetchImpl = expoFetch as unknown as FetchLike;
@@ -22,10 +23,13 @@ export interface AppContextValue {
   engine: SyncEngine | null;
   status: SyncStatus;
   policy: Policy | null;
+  /// A newer app update is downloaded and applies on the next cold start.
+  updateReady: boolean;
   /// Joins the relay a desktop QR points at. Throws with a Korean message.
   connect(link: string): Promise<void>;
   disconnect(): Promise<void>;
   rename(name: string): Promise<void>;
+  checkUpdates(force?: boolean): Promise<UpdateCheck>;
 }
 
 const Ctx = createContext<AppContextValue | null>(null);
@@ -36,7 +40,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [engine, setEngine] = useState<SyncEngine | null>(null);
   const [status, setStatus] = useState<SyncStatus>({ state: "idle" });
   const [policy, setPolicy] = useState<Policy | null>(null);
+  const [updateReady, setUpdateReady] = useState(false);
   const dbRef = useRef<Promise<Db> | null>(null);
+
+  const checkUpdates = useCallback(async (force = false) => {
+    const result = await checkForUpdate(force);
+    if (result === "downloaded") setUpdateReady(true);
+    return result;
+  }, []);
 
   const openDb = useCallback(() => (dbRef.current ??= Db.open()), []);
 
@@ -59,6 +70,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         try {
           setEngine(await build(s));
           setSession(s);
+          configureUpdates(s);
+          void checkUpdates();
         } catch {
           setSession(null);
         }
@@ -68,7 +81,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [build]);
+  }, [build, checkUpdates]);
 
   useEffect(() => {
     if (!engine) return;
@@ -78,8 +91,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setPolicy(engine.policy);
     if (AppState.currentState === "active" || AppState.currentState === "unknown") engine.start();
     const sub = AppState.addEventListener("change", (state) => {
-      if (state === "active") engine.start();
-      else engine.stop();
+      if (state === "active") {
+        engine.start();
+        void checkUpdates();
+      } else engine.stop();
     });
     return () => {
       sub.remove();
@@ -87,7 +102,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       offPolicy();
       engine.stop();
     };
-  }, [engine]);
+  }, [engine, checkUpdates]);
 
   const connect = useCallback(
     async (link: string) => {
@@ -107,8 +122,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       await saveSession(s);
       setEngine(await build(s));
       setSession(s);
+      configureUpdates(s);
+      void checkUpdates(true);
     },
-    [build, openDb],
+    [build, openDb, checkUpdates],
   );
 
   const disconnect = useCallback(async () => {
@@ -118,6 +135,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setSession(null);
     setStatus({ state: "idle" });
     setPolicy(null);
+    configureUpdates(null);
     await clearSession();
     try {
       await current?.relay.removeDevice(current.deviceId);
@@ -140,8 +158,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   );
 
   const value = useMemo<AppContextValue>(
-    () => ({ ready, session, engine, status, policy, connect, disconnect, rename }),
-    [ready, session, engine, status, policy, connect, disconnect, rename],
+    () => ({ ready, session, engine, status, policy, updateReady, connect, disconnect, rename, checkUpdates }),
+    [ready, session, engine, status, policy, updateReady, connect, disconnect, rename, checkUpdates],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

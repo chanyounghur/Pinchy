@@ -2,15 +2,18 @@ import { useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import Constants from "expo-constants";
 import { useApp } from "@/app-context";
 import type { Device } from "@/protocol/relay";
+import { applyUpdate, currentUpdate, updatesEnabled } from "@/updates";
 import { Button } from "@/ui/Button";
 import { bytes, relativeTime } from "@/ui/format";
 import { useTheme } from "@/ui/theme";
 import { useToast } from "@/ui/Toast";
 
 export default function Settings() {
-  const { session, engine, status, policy, rename, disconnect } = useApp();
+  const { session, engine, status, policy, updateReady, rename, disconnect, checkUpdates } = useApp();
+  const [checking, setChecking] = useState(false);
   const t = useTheme();
   const router = useRouter();
   const toast = useToast();
@@ -67,7 +70,25 @@ export default function Settings() {
     ]);
   }, [engine, toast]);
 
+  const lookForUpdate = useCallback(async () => {
+    setChecking(true);
+    const result = await checkUpdates(true);
+    setChecking(false);
+    toast(
+      result === "downloaded"
+        ? "새 버전을 받았어요"
+        : result === "none"
+          ? "최신 버전이에요"
+          : result === "disabled"
+            ? "이 빌드는 업데이트를 받지 않아요"
+            : "업데이트를 확인하지 못했어요",
+    );
+  }, [checkUpdates, toast]);
+
   if (!session || !engine) return <View style={{ flex: 1, backgroundColor: t.bg }} />;
+
+  const update = currentUpdate();
+  const version = Constants.expoConfig?.version ?? "?";
 
   const usage = policy?.usage;
   const cap = (policy?.max_storage_mb ?? 0) * 1024 * 1024;
@@ -146,6 +167,20 @@ export default function Settings() {
           </View>
           <Row label="항목 최대 크기" value={policy ? `${policy.max_blob_mb} MB` : "…"} t={t} />
           <Row label="비밀번호 관리자 항목" value={policy ? (policy.sync_concealed ? "동기화함" : "동기화하지 않음") : "…"} t={t} last />
+        </Section>
+
+        <Section title="앱" t={t}>
+          <Row label="버전" value={update.embedded || !update.id ? version : `${version} · 업데이트 ${update.id.slice(0, 8)}`} t={t} />
+          <Row label="런타임" value={update.runtime ?? "—"} t={t} />
+          {updateReady ? (
+            <Pressable onPress={() => void applyUpdate()} style={[styles.row, { justifyContent: "center", borderTopWidth: 1, borderTopColor: t.separator }]} accessibilityRole="button">
+              <Text style={{ color: t.origin, fontSize: 15, fontWeight: "600" }}>받아 둔 새 버전 지금 적용</Text>
+            </Pressable>
+          ) : (
+            <Pressable onPress={() => void lookForUpdate()} disabled={checking || !updatesEnabled} style={[styles.row, { justifyContent: "center", borderTopWidth: 1, borderTopColor: t.separator }]} accessibilityRole="button">
+              <Text style={{ color: updatesEnabled ? t.origin : t.muted, fontSize: 15, fontWeight: "600" }}>{checking ? "확인하는 중…" : "업데이트 확인"}</Text>
+            </Pressable>
+          )}
         </Section>
 
         <Section title="" t={t}>

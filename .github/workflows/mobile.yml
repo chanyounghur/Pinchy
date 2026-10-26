@@ -50,6 +50,47 @@ jobs:
           PINCHY_RELAY_BIN: ${{ github.workspace }}/relay/target/debug/pinchy-relay
         run: bun run test
 
+  updates:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '22'
+      - name: Install app dependencies
+        working-directory: mobile
+        run: bun install --frozen-lockfile
+      - name: Export the JavaScript bundles
+        working-directory: mobile
+        run: |
+          bunx expo export --platform ios --platform android --output-dir dist
+          bunx expo config --type public --json > dist/expoConfig.json
+      - name: Build and sign the update manifests
+        working-directory: mobile
+        env:
+          EXPO_UPDATES_PRIVATE_KEY: ${{ secrets.EXPO_UPDATES_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./package.json').version")
+          runtime=$(node -p "require('./app.json').expo.runtimeVersion")
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && [ -z "${EXPO_UPDATES_PRIVATE_KEY:-}" ] && [ -f certs/certificate.pem ]; then
+            echo "::error::EXPO_UPDATES_PRIVATE_KEY secret is missing while certs/certificate.pem is committed; phones would refuse this update. See mobile/README.md."
+            exit 1
+          fi
+          python3 ../scripts/expo-update.py dist out-updates --version "$version" --runtime "$runtime" \
+            --tag "mobile-v$version" --repo "$GITHUB_REPOSITORY" --config dist/expoConfig.json
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: phone-updates
+          path: mobile/out-updates
+          if-no-files-found: error
+          retention-days: 14
+
   android:
     needs: validate
     runs-on: ubuntu-latest
@@ -156,7 +197,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push'
-    needs: [android, ios]
+    needs: [android, ios, updates]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -168,11 +209,16 @@ jobs:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: phone-*
-          path: release-assets
+          path: downloaded
           merge-multiple: true
-      - name: Write checksums
-        working-directory: release-assets
-        run: sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Arrange release assets
+        run: |
+          set -euo pipefail
+          mkdir -p release-assets
+          cp downloaded/*.apk downloaded/*.ipa release-assets/
+          cp downloaded/assets/* release-assets/
+          (cd release-assets && sha256sum *.apk *.ipa > SHA256SUMS.txt && cat SHA256SUMS.txt)
+          ls release-assets | wc -l
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -187,11 +233,12 @@ jobs:
 
           - **iPhone**: \`Pinchy-$version.ipa\` (미서명). AltStore·SideStore에 소스 \`https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/altstore.json\`을 추가하면 목록에 나타나고, 설치할 때 내 Apple ID로 서명돼요.
           - **Android**: \`Pinchy-$version.apk\`를 받아 설치해요. 이전 버전 위에 그대로 설치됩니다.
+          - 이미 설치된 같은 런타임의 앱은 다시 설치하지 않아도 돼요. 릴레이가 이 릴리즈의 업데이트를 내려주고, 앱이 다음에 열릴 때 적용돼요. 나머지 파일은 그 업데이트의 번들과 에셋이에요.
           NOTES
           gh release create "$RELEASE_TAG" release-assets/* --verify-tag --draft \
             --title "Pinchy 휴대폰 $version" --notes-file release-notes.md
           gh release edit "$RELEASE_TAG" --draft=false --latest=false
-      - name: Update the AltStore source on main
+      - name: Publish the update manifests and AltStore source on main
         env:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
@@ -199,8 +246,10 @@ jobs:
           version="${RELEASE_TAG#mobile-v}"
           python3 scripts/altstore-source.py mobile/altstore.json "$version" "release-assets/Pinchy-$version.ipa" \
             "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          mkdir -p mobile/updates
+          cp -R downloaded/updates/. mobile/updates/
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add mobile/altstore.json
-          git commit -m "chore(mobile): list $version in the AltStore source" || exit 0
+          git add mobile/altstore.json mobile/updates
+          git commit -m "chore(mobile): publish $version to phones" || exit 0
           git push origin HEAD:main

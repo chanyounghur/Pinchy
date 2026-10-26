@@ -15,7 +15,7 @@ import { useTheme } from "@/ui/theme";
 import { useToast } from "@/ui/Toast";
 
 export default function History() {
-  const { ready, session, engine, status } = useApp();
+  const { ready, session, engine, status, updateReady } = useApp();
   const t = useTheme();
   const router = useRouter();
   const toast = useToast();
@@ -28,6 +28,10 @@ export default function History() {
   useEffect(() => {
     if (session && share.hasShareIntent) router.push("/add?source=share");
   }, [session, share.hasShareIntent, router]);
+
+  useEffect(() => {
+    if (updateReady) toast("새 버전을 받았어요. 다시 열면 적용돼요");
+  }, [updateReady, toast]);
 
   const copy = useCallback(
     async (item: Item) => {

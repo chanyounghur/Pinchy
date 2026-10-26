@@ -26,6 +26,7 @@
     },
     "plugins": [
       "expo-router",
+      "expo-updates",
       "expo-secure-store",
       "expo-sqlite",
       [
@@ -68,6 +69,14 @@
           ]
         }
       ]
-    ]
+    ],
+    "runtimeVersion": "1",
+    "updates": {
+      "url": "https://pinchy.invalid/updates/manifest",
+      "enabled": true,
+      "checkAutomatically": "NEVER",
+      "fallbackToCacheTimeout": 0,
+      "disableAntiBrickingMeasures": true
+    }
   }
 }
