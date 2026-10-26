@@ -31,9 +31,13 @@ export function ItemCard({ item, onPress, onLongPress, full = false }: { item: I
         <Text style={styles.time}>{relativeTime(item.copied_at)}</Text>
         {item.app ? (
           <View style={[styles.iconRing, { backgroundColor: t.card }]}>
-            <View style={[styles.icon, { backgroundColor: color }]}>
-              <Text style={styles.iconText}>{initial(item.app)}</Text>
-            </View>
+            {item.icon ? (
+              <Image source={{ uri: `data:image/png;base64,${item.icon}` }} style={styles.icon} contentFit="cover" accessibilityLabel={item.app} />
+            ) : (
+              <View style={[styles.icon, { backgroundColor: color }]}>
+                <Text style={styles.iconText}>{initial(item.app)}</Text>
+              </View>
+            )}
           </View>
         ) : null}
       </View>

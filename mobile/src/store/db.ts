@@ -18,6 +18,8 @@ export interface Item {
   app: string | null;
   /// `#rrggbb` chosen by the copying device, when it sent one.
   color: string | null;
+  /// The source app's icon as base64 PNG, when the copying device sent one.
+  icon: string | null;
   copied_at: number;
   updated_at: number;
   blob_size: number | null;
@@ -36,6 +38,7 @@ interface Row {
   from_device: string;
   app: string | null;
   color: string | null;
+  icon: string | null;
   copied_at: number;
   updated_at: number;
   blob_size: number | null;
@@ -56,6 +59,7 @@ CREATE TABLE IF NOT EXISTS items (
   from_device TEXT NOT NULL,
   app TEXT,
   color TEXT,
+  icon TEXT,
   copied_at INTEGER NOT NULL,
   updated_at INTEGER NOT NULL,
   blob_size INTEGER,
@@ -73,20 +77,22 @@ export class Db {
   static async open(name = "pinchy.db"): Promise<Db> {
     const db = await SQLite.openDatabaseAsync(name);
     await db.execAsync(SCHEMA);
-    // 1.0.0 made the table without `color`.
+    // 1.0.0 made the table without `color`, 1.0.1 without `icon`.
     const columns = await db.getAllAsync<{ name: string }>("PRAGMA table_info(items)");
-    if (!columns.some((c) => c.name === "color")) await db.execAsync("ALTER TABLE items ADD COLUMN color TEXT");
+    for (const column of ["color", "icon"]) {
+      if (!columns.some((c) => c.name === column)) await db.execAsync(`ALTER TABLE items ADD COLUMN ${column} TEXT`);
+    }
     return new Db(db);
   }
 
   async upsert(item: Omit<Item, "blob_state" | "width" | "height"> & Partial<Pick<Item, "blob_state" | "width" | "height">>): Promise<void> {
     // A blob already on disk survives a re-copy: blobs never change.
     await this.db.runAsync(
-      `INSERT INTO items (id, seq, origin, kind, text, files, from_device, app, color, copied_at, updated_at, blob_size, blob_state, width, height)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `INSERT INTO items (id, seq, origin, kind, text, files, from_device, app, color, icon, copied_at, updated_at, blob_size, blob_state, width, height)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          seq = excluded.seq, origin = excluded.origin, kind = excluded.kind, text = excluded.text,
-         files = excluded.files, from_device = excluded.from_device, app = excluded.app, color = excluded.color,
+         files = excluded.files, from_device = excluded.from_device, app = excluded.app, color = excluded.color, icon = excluded.icon,
          copied_at = excluded.copied_at, updated_at = excluded.updated_at, blob_size = excluded.blob_size,
          blob_state = CASE WHEN items.blob_state = 'ready' THEN 'ready' ELSE excluded.blob_state END,
          width = COALESCE(items.width, excluded.width), height = COALESCE(items.height, excluded.height)`,
@@ -99,6 +105,7 @@ export class Db {
       item.from,
       item.app,
       item.color,
+      item.icon,
       item.copied_at,
       item.updated_at,
       item.blob_size,
@@ -190,6 +197,7 @@ function fromRow(row: Row): Item {
     from: row.from_device,
     app: row.app,
     color: row.color ?? null,
+    icon: row.icon ?? null,
     copied_at: row.copied_at,
     updated_at: row.updated_at,
     blob_size: row.blob_size,

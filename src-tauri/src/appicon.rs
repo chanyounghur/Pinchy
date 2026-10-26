@@ -44,6 +44,20 @@ impl AppIconCache {
         look.icon.as_ref().map(|_| look.clone())
     }
 
+    /// Keeps an icon another device sent for an app this device lacks, named
+    /// by its content so the same icon is written once. The file's path.
+    pub fn store_received(&self, png: &[u8]) -> Option<String> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        png.hash(&mut hasher);
+        let path = self.dir.join(format!("received-{:016x}.png", hasher.finish()));
+        if !path.exists() {
+            ensure_dir(&self.dir);
+            std::fs::write(&path, png).ok()?;
+        }
+        Some(path.to_string_lossy().into_owned())
+    }
+
     fn build(&self, bundle_id: &str, bundle_path: &str) -> Option<AppLook> {
         let png_path = self.dir.join(format!("{bundle_id}.png"));
         let img = if png_path.exists() {

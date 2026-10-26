@@ -186,6 +186,7 @@ export class SyncEngine {
       from: meta.from?.trim() || "알 수 없는 기기",
       app: meta.app ?? null,
       color: meta.color ?? null,
+      icon: meta.icon ?? null,
       copied_at: meta.copied_at ?? change.updated_at,
       updated_at: change.updated_at,
       blob_size: change.blob_size ?? null,

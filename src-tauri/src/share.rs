@@ -318,6 +318,10 @@ struct Meta {
     /// that copied it, so every device shows the same color.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     color: Option<String>,
+    /// The app's icon as a base64 PNG (64px), so devices without the app
+    /// show the same icon as the device that copied it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    icon: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -443,6 +447,22 @@ fn clean_color(color: &str) -> Option<String> {
     let color = color.trim();
     let hex = color.strip_prefix('#')?;
     (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| color.to_ascii_lowercase())
+}
+
+/// The largest icon worth sending: a 64px PNG is a few KB.
+const MAX_ICON_BYTES: usize = 64 * 1024;
+const PNG_MAGIC: &[u8] = b"\x89PNG\r\n\x1a\n";
+
+/// The cached icon file as base64 for the envelope; None when missing or odd.
+fn read_icon(path: &str) -> Option<String> {
+    let bytes = std::fs::read(path).ok()?;
+    (bytes.len() <= MAX_ICON_BYTES && bytes.starts_with(PNG_MAGIC)).then(|| STANDARD.encode(bytes))
+}
+
+/// A received icon's PNG bytes; None unless it is a small PNG.
+fn decode_icon(icon: &str) -> Option<Vec<u8>> {
+    let bytes = STANDARD.decode(icon.trim()).ok()?;
+    (bytes.len() <= MAX_ICON_BYTES && bytes.starts_with(PNG_MAGIC)).then_some(bytes)
 }
 
 fn clean_name(name: &str) -> Option<String> {
@@ -918,6 +938,7 @@ impl Relay {
             app: item.source_app.clone(),
             copied_at: Some(item.created_at),
             color: item.app_color.as_deref().and_then(clean_color),
+            icon: item.app_icon.as_deref().and_then(read_icon),
         };
         let (meta, blob) = match item.kind.as_str() {
             "text" | "link" => (Meta { text: Some(item.content.clone()), ..base }, None),
@@ -1011,7 +1032,14 @@ impl Relay {
             }
             (kind, _, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
         };
-        Ok(Opened { from, app, copied_at, color: meta.color.as_deref().and_then(clean_color), content })
+        Ok(Opened {
+            from,
+            app,
+            copied_at,
+            color: meta.color.as_deref().and_then(clean_color),
+            icon: meta.icon.as_deref().and_then(decode_icon),
+            content,
+        })
     }
 
     fn blob(&self, id: &str) -> Result<Vec<u8>, ReceiveError> {
@@ -1044,14 +1072,16 @@ struct Opened {
     copied_at: i64,
     /// The card color the copying device chose, when it sent one.
     color: Option<String>,
+    /// The source app's icon as PNG bytes, when the copying device sent one.
+    icon: Option<Vec<u8>>,
     content: Content,
 }
 
 impl Opened {
     /// Builds the local row. Items first copied on this device keep their
     /// own look; others show the app they came from when it is installed
-    /// here too, else the color the copying device sent, else the device
-    /// they came from.
+    /// here too, else the icon and color the copying device sent, else the
+    /// device they came from.
     fn into_item(self, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
@@ -1065,7 +1095,10 @@ impl Opened {
                 item.app_icon = look.icon;
                 item.app_color = look.color;
             }
-            None => item.app_color = Some(self.color.unwrap_or_else(|| RECEIVED_COLOR.into())),
+            None => {
+                item.app_icon = self.icon.as_deref().and_then(|png| icons.store_received(png));
+                item.app_color = Some(self.color.unwrap_or_else(|| RECEIVED_COLOR.into()));
+            }
         }
         if own_name != Some(self.from.as_str()) {
             item.origin_device = Some(self.from);
@@ -1652,6 +1685,35 @@ mod tests {
     /// Writes known-answer vectors for the phone app's TypeScript port of
     /// `Key` (mobile/test/vectors.json). Run with
     /// `cargo test --lib dump_mobile_vectors -- --ignored` after changing
+    /// A 2×2 PNG, the smallest icon worth testing with.
+    fn tiny_png() -> Vec<u8> {
+        let mut out = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(2, 2, image::Rgba([59, 91, 219, 255]))
+            .write_to(&mut out, image::ImageFormat::Png)
+            .unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn icons_travel_as_small_pngs_only() {
+        let png = tiny_png();
+        let dir = std::env::temp_dir().join(format!("pinchy-icon-{}-{}", std::process::id(), crate::db::now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("icon.png");
+        std::fs::write(&path, &png).unwrap();
+        let sent = read_icon(path.to_str().unwrap()).unwrap();
+        assert_eq!(decode_icon(&sent).unwrap(), png);
+        assert_eq!(decode_icon("not base64!"), None);
+        assert_eq!(decode_icon(&STANDARD.encode(b"GIF89a....")), None, "only PNG");
+        assert_eq!(decode_icon(&STANDARD.encode([&PNG_MAGIC[..], &vec![0u8; MAX_ICON_BYTES]].concat())), None, "too large");
+        assert_eq!(read_icon(dir.join("missing.png").to_str().unwrap()), None);
+        let cache = crate::appicon::AppIconCache::new(dir.join("icons"));
+        let stored = cache.store_received(&png).unwrap();
+        assert_eq!(std::fs::read(&stored).unwrap(), png);
+        assert_eq!(cache.store_received(&png).unwrap(), stored, "same icon, same file");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// the envelope format; the mobile tests open these with their own code.
     #[test]
     #[ignore]
@@ -1668,6 +1730,7 @@ mod tests {
             app: Some("Finder".into()),
             copied_at: Some(1_761_400_000_000),
             color: Some("#3b5bdb".into()),
+            icon: Some(STANDARD.encode(tiny_png())),
         };
         let meta_json = serde_json::to_string(&meta).unwrap();
         let blob = b"abc\x00\x01\x02\xff".to_vec();
@@ -1759,13 +1822,14 @@ mod tests {
             v: 2, kind: "text".into(), text: Some("안녕".into()), files: None,
             from: Some("집 맥".into()), app: Some("Notes".into()), copied_at: Some(1_700_000_000_000),
             color: Some("#1f8fff".into()),
+            icon: Some(STANDARD.encode(tiny_png())),
         };
-        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None, color: None };
+        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None, color: None, icon: None };
         assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":2,"kind":"image"}"#);
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&text).unwrap()).unwrap();
         assert_eq!(restored, text);
         let files = Meta {
-            v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None, color: None,
+            v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None, color: None, icon: None,
             files: Some(vec![FileMeta { name: "보고서.pdf".into(), size: 3 }]),
         };
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&files).unwrap()).unwrap();
@@ -1908,6 +1972,12 @@ mod tests {
         std::fs::write(&source, &png).unwrap();
         let mut text = item("text", "집에서 보낸 문장", false);
         text.created_at = 1_700_000_000_000;
+        // An app the other device does not have: its icon and color travel along.
+        let app_icon = dir.join("app.png");
+        std::fs::write(&app_icon, tiny_png()).unwrap();
+        text.source_app = Some("Pinchy Test App".into());
+        text.app_icon = Some(app_icon.to_string_lossy().into_owned());
+        text.app_color = Some("#3B5BDB".into());
         assert!(a.put(&text).unwrap());
         assert!(a.put(&item("image", &source.to_string_lossy(), false)).unwrap());
         let note = dir.join("메모.txt");
@@ -1930,6 +2000,11 @@ mod tests {
         assert_eq!(opened[0].0, 1_700_000_000_000);
         assert_eq!(opened[0].1.content, "집에서 보낸 문장");
         assert_eq!(opened[0].1.origin_device.as_deref(), Some("집 맥"));
+        assert_eq!(opened[0].1.source_app.as_deref(), Some("Pinchy Test App"));
+        assert_eq!(opened[0].1.app_color.as_deref(), Some("#3b5bdb"));
+        let received_icon = opened[0].1.app_icon.clone().expect("the sent icon is kept");
+        assert!(received_icon.starts_with(dirs.icons.to_str().unwrap()));
+        assert_eq!(std::fs::read(&received_icon).unwrap(), tiny_png());
         assert_eq!(std::fs::read(&opened[1].1.content).unwrap(), png);
         let paths: Vec<PathBuf> = serde_json::from_str(&opened[2].1.content).unwrap();
         assert_eq!(paths[0].file_name().unwrap(), "메모.txt");

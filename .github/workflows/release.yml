@@ -142,10 +142,9 @@ jobs:
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           cat > release-notes.md <<'NOTES'
-          ## 1.0.1: 카드 색이 모든 기기에서 같아집니다
+          ## 1.0.2: 앱 아이콘도 함께 갑니다
 
-          - 복사한 앱의 카드 색을 항목과 함께 보내서, 받는 기기에 그 앱이 없어도 같은 색으로 표시합니다. 휴대폰 앱에서도 데스크톱과 같은 색이 보입니다.
-          - 휴대폰 앱(Android·iPhone)이 나왔습니다. 설치와 연결은 [mobile/README.md](https://github.com/chanyounghur/Pinchy/blob/main/mobile/README.md)를 보세요.
+          - 복사한 앱의 아이콘을 항목과 함께 보내서, 그 앱이 없는 기기(휴대폰 포함)에서도 같은 아이콘이 보입니다. 이 버전 이후에 복사한 항목부터 적용됩니다.
 
           ## 다운로드
 

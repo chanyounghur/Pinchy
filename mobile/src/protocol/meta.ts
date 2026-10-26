@@ -22,7 +22,13 @@ export interface Meta {
   copied_at?: number;
   /// The app's card color (`#rrggbb`) as the copying device shows it.
   color?: string;
+  /// The app's icon as a base64 PNG (64px), so this device can show it
+  /// without having the app.
+  icon?: string;
 }
+
+/// A 64px PNG is a few KB; anything bigger is not an icon.
+export const MAX_ICON_CHARS = 64 * 1024 * 4 / 3 + 4;
 
 export const META_VERSION = 2;
 
@@ -37,6 +43,7 @@ export function encodeMeta(meta: Meta): Uint8Array {
   if (meta.app !== undefined) clean.app = meta.app;
   if (meta.copied_at !== undefined) clean.copied_at = meta.copied_at;
   if (meta.color !== undefined) clean.color = meta.color;
+  if (meta.icon !== undefined) clean.icon = meta.icon;
   return encoder.encode(JSON.stringify(clean));
 }
 
@@ -67,10 +74,13 @@ export function decodeMeta(bytes: Uint8Array): Meta | null {
   if (typeof r.app === "string") meta.app = r.app;
   if (typeof r.copied_at === "number") meta.copied_at = r.copied_at;
   if (typeof r.color === "string" && HEX_COLOR.test(r.color.trim())) meta.color = r.color.trim().toLowerCase();
+  if (typeof r.icon === "string" && r.icon.length <= MAX_ICON_CHARS && PNG_BASE64.test(r.icon)) meta.icon = r.icon;
   return meta;
 }
 
 const HEX_COLOR = /^#[0-9a-fA-F]{6}$/;
+/// Standard base64 that starts with the PNG signature (`iVBORw0KGgo`).
+const PNG_BASE64 = /^iVBORw0KGgo[A-Za-z0-9+/]*={0,2}$/;
 
 /// Splits a files blob back into its parts. Null when the sizes do not add
 /// up to the blob.

@@ -32,6 +32,8 @@ test("opens envelopes, blobs and labels sealed by the desktop", () => {
   assert.equal(parsed?.kind, "files");
   assert.equal(parsed?.from, "집 맥");
   assert.equal(parsed?.color, "#3b5bdb");
+  const icon = decodeBase64(parsed?.icon ?? "");
+  assert.ok(icon && icon.length > 8 && icon[0] === 0x89 && icon[1] === 0x50, "the icon is a PNG");
   assert.deepEqual(parsed?.files, [
     { name: "a.txt", size: 3 },
     { name: "b.bin", size: 4 },
