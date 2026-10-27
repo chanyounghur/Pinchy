@@ -27,7 +27,16 @@ export default function RootLayout() {
                 <Stack.Screen name="join" options={{ gestureEnabled: false }} />
                 <Stack.Screen name="item/[id]" />
                 <Stack.Screen name="settings" />
-                <Stack.Screen name="add" options={{ presentation: "modal" }} />
+                <Stack.Screen
+                  name="add"
+                  options={{
+                    presentation: "formSheet",
+                    sheetAllowedDetents: "fitToContents",
+                    sheetGrabberVisible: true,
+                    sheetCornerRadius: 20,
+                  }}
+                />
+                <Stack.Screen name="upload" options={{ presentation: "modal" }} />
               </Stack>
             </ToastProvider>
           </AppProvider>

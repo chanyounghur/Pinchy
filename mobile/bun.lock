@@ -12,10 +12,12 @@
         "expo-constants": "~58.0.13",
         "expo-crypto": "~58.0.7",
         "expo-dev-client": "~58.0.15",
+        "expo-document-picker": "~58.0.4",
         "expo-file-system": "~58.0.11",
         "expo-haptics": "~58.0.7",
         "expo-image": "~58.0.17",
         "expo-image-manipulator": "~58.0.15",
+        "expo-image-picker": "~58.0.10",
         "expo-linking": "~58.0.14",
         "expo-router": "~58.0.26",
         "expo-secure-store": "~58.0.2",
@@ -606,6 +608,8 @@
 
     "expo-dev-menu-interface": ["expo-dev-menu-interface@58.0.1", "", { "peerDependencies": { "expo": "*" } }, "sha512-XdjO3ZZhEq1dXm15GVtzQ0SXxSTPguJIDZib3Z8tAf2jLxfPUlQObgO/0hdnw7ssEBhTT2jQo2HAfnOSGUfj8w=="],
 
+    "expo-document-picker": ["expo-document-picker@58.0.4", "", { "peerDependencies": { "expo": "*" } }, "sha512-rxs+9RrpI55/BEGNB/3sXjoBG6yZDLyn6Z7KzjbbBLdX8bE2cZT4IozQ3Q5wufaEEeaHQn48EgPiuMoTsAidpg=="],
+
     "expo-eas-client": ["expo-eas-client@58.0.2", "", {}, "sha512-mhRYnE35MzGxR1Xnl9FAg7/yHaocy4xoVzgsDmS9cbK+1wM6l74/I/73/E4Kr6wChdVZfeS6S+Tv4I1qYbGY2g=="],
 
     "expo-file-system": ["expo-file-system@58.0.11", "", { "peerDependencies": { "expo": "*", "react-native": "*" } }, "sha512-accVZyXeA8RYUNk52ydkcHPnQaYMVJWlWvdF8pU0xLvt7ZPbaOgGzbgbeyTswjlsKSTmrAsKos4prx0PVM4ERA=="],
@@ -621,6 +625,8 @@
     "expo-image-loader": ["expo-image-loader@58.0.3", "", { "peerDependencies": { "expo": "*" } }, "sha512-zlHudxC8OObyqCHmvdxJqURI7886KJ0cUJyn7R/a8FOD9fP837xKDN+u4SIt7XsSSVPNXzMd4Y7mN0pmup8NGA=="],
 
     "expo-image-manipulator": ["expo-image-manipulator@58.0.15", "", { "dependencies": { "expo-image-loader": "~58.0.3" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-+DGAK+T3Q1W4AJnStC/tM+NufU4wK36Yw7XPyUUCrBkXpdlno7+t2mw+8apBH/WDkrkWSR0v0bwEWFaSAYQy0Q=="],
+
+    "expo-image-picker": ["expo-image-picker@58.0.10", "", { "dependencies": { "expo-image-loader": "~58.0.3" }, "peerDependencies": { "expo": "*" } }, "sha512-yqQC9UYMWSUxk6U0jaS1vE1w+b9Ru0FJmQ3KjUf9Q9oVg5xBxmg8+Ts+usazMAuPoskNIXJ++VZ+uK6br9yUGQ=="],
 
     "expo-json-utils": ["expo-json-utils@58.0.1", "", {}, "sha512-jNHNElOUPz2/vW3CbDKRn6tTF6eE9wwVbh/Isnqp5c/CdTcONzFVR3YHN3WQ05PnkmieyEqVfeOusOd1X9FDtQ=="],
 

@@ -1,168 +1,158 @@
-// Putting something into the history from this phone: what another app
-// shared with us, or what is on the clipboard. Shows the draft as the card
-// it will become, then seals and uploads it.
+// The add sheet: pick photos or files to upload, or send what is on the
+// clipboard with one tap on its preview.
 
-import { Image } from "expo-image";
-import { useShareIntentContext } from "expo-share-intent";
-import { useLocalSearchParams, useRouter } from "expo-router";
+import { useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import React, { useEffect, useMemo, useState } from "react";
-import { ActivityIndicator, ScrollView, StyleSheet, Text, View } from "react-native";
+import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useApp } from "@/app-context";
-import { draftFromClipboard, draftFromShare } from "@/clipboard";
-import { encodeBase64 } from "@/protocol/base64";
+import { draftFromClipboard } from "@/clipboard";
+import { pickFiles, pickPhotos, setPendingDraft } from "@/pick";
 import { tooLarge, upload, type Draft } from "@/upload";
-import { Button } from "@/ui/Button";
-import { bytes, domainOf } from "@/ui/format";
-import { useTheme } from "@/ui/theme";
+import { DraftCard } from "@/ui/DraftCard";
+import { radius, useTheme } from "@/ui/theme";
 import { useToast } from "@/ui/Toast";
 
+type Busy = "photos" | "files" | "clipboard" | null;
+
 export default function Add() {
-  const { source } = useLocalSearchParams<{ source?: string }>();
   const { session, engine, policy } = useApp();
-  const share = useShareIntentContext();
   const t = useTheme();
   const router = useRouter();
   const toast = useToast();
   const insets = useSafeAreaInsets();
-  const [draft, setDraft] = useState<Draft | null | undefined>(undefined);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const fromShare = source === "share";
+  const [clip, setClip] = useState<Draft | null | undefined>(undefined);
+  const [busy, setBusy] = useState<Busy>(null);
+  const maxMb = policy?.max_blob_mb ?? 64;
 
   useEffect(() => {
     let cancelled = false;
-    (async () => {
-      try {
-        const d = fromShare ? (share.hasShareIntent ? await draftFromShare(share.shareIntent) : null) : await draftFromClipboard();
-        if (!cancelled) setDraft(d);
-      } catch (e) {
-        if (!cancelled) {
-          setDraft(null);
-          setError(e instanceof Error ? e.message : "내용을 읽지 못했어요.");
-        }
-      }
-    })();
+    draftFromClipboard()
+      .then((d) => {
+        if (!cancelled) setClip(d);
+      })
+      .catch(() => {
+        if (!cancelled) setClip(null);
+      });
     return () => {
       cancelled = true;
     };
-    // The share intent is read once when the sheet opens.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fromShare]);
+  }, []);
 
-  const limit = useMemo(() => (draft ? tooLarge(draft, policy?.max_blob_mb ?? 64) : null), [draft, policy]);
+  const limit = useMemo(() => (clip ? tooLarge(clip, maxMb) : null), [clip, maxMb]);
 
-  const close = () => {
-    if (fromShare) share.resetShareIntent();
-    router.back();
-  };
-
-  const send = async () => {
-    if (!engine || !session || !draft) return;
-    setBusy(true);
-    setError(null);
+  const pick = async (which: "photos" | "files") => {
+    setBusy(which);
     try {
-      await upload(engine, session.name, draft);
-      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      toast("올렸어요");
-      close();
+      const draft = which === "photos" ? await pickPhotos() : await pickFiles();
+      if (!draft) return;
+      setPendingDraft(draft);
+      router.replace("/upload?source=picked");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "올리지 못했어요.");
+      toast(e instanceof Error ? e.message : "고른 것을 읽지 못했어요");
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
 
-  const png = draft?.png;
-  const pngUri = useMemo(() => (png ? `data:image/png;base64,${encodeBase64(png)}` : null), [png]);
+  const sendClipboard = async () => {
+    if (!engine || !session || !clip || limit) return;
+    setBusy("clipboard");
+    try {
+      await upload(engine, session.name, clip);
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      toast("올렸어요");
+      router.back();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : "올리지 못했어요");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const disabled = busy !== null || !engine;
 
   return (
-    <View style={[styles.screen, { backgroundColor: t.bg, paddingBottom: insets.bottom + 16 }]}>
-      <View style={styles.grip}>
-        <View style={[styles.gripBar, { backgroundColor: t.chipStrong }]} />
-      </View>
-      <View style={styles.titleRow}>
-        <Text style={[styles.title, { color: t.fg }]}>Pinchy에 추가</Text>
-        <Text style={{ color: t.muted, fontSize: 13, fontWeight: "500" }}>{fromShare ? "공유됨" : "클립보드에서"}</Text>
+    <View style={[styles.sheet, { backgroundColor: t.bg, paddingBottom: insets.bottom + 16 }]}>
+      <View style={[styles.group, { backgroundColor: t.card }]}>
+        <Row
+          glyph="◫"
+          title="사진 올리기"
+          hint="앨범에서 고르기 · 여러 장도 돼요"
+          busy={busy === "photos"}
+          disabled={disabled}
+          onPress={() => void pick("photos")}
+        />
+        <View style={[styles.separator, { backgroundColor: t.separator }]} />
+        <Row
+          glyph="▤"
+          title="파일 올리기"
+          hint={`파일 앱에서 고르기 · 최대 ${maxMb}MB`}
+          busy={busy === "files"}
+          disabled={disabled}
+          onPress={() => void pick("files")}
+        />
       </View>
 
-      <ScrollView contentContainerStyle={styles.content}>
-        {draft === undefined ? (
-          <View style={styles.center}>
-            <ActivityIndicator />
-          </View>
-        ) : draft === null ? (
-          <View style={styles.center}>
-            <Text style={{ color: t.muted, fontSize: 15, textAlign: "center", lineHeight: 22 }}>
-              {error ?? (fromShare ? "공유된 내용이 없어요." : "클립보드가 비어 있어요.\n다른 앱에서 복사한 뒤 다시 눌러 주세요.")}
-            </Text>
-          </View>
-        ) : (
-          <View style={[styles.card, { backgroundColor: t.card }]}>
-            <View style={[styles.head, { backgroundColor: t.accentStrong }]}>
-              <Text style={styles.kind}>{draft.kind === "image" ? "이미지" : draft.kind === "files" ? "파일" : draft.kind === "link" ? "링크" : "텍스트"}</Text>
-              <Text style={styles.time}>지금</Text>
-            </View>
-            {draft.kind === "image" && pngUri ? (
-              <Image source={{ uri: pngUri }} style={[styles.image, { backgroundColor: t.chip }]} contentFit="contain" accessibilityLabel="올릴 이미지" />
-            ) : draft.kind === "files" ? (
-              <View style={{ padding: 14, gap: 8 }}>
-                {draft.files?.map((f, i) => (
-                  <View key={`${f.name}-${i}`} style={{ flexDirection: "row", justifyContent: "space-between", gap: 12 }}>
-                    <Text style={{ color: t.fg, fontWeight: "600", flex: 1 }} numberOfLines={1}>
-                      {f.name}
-                    </Text>
-                    <Text style={{ color: t.muted }}>{bytes(f.bytes.length)}</Text>
-                  </View>
-                ))}
-              </View>
-            ) : (
-              <View style={{ padding: 14 }}>
-                {draft.kind === "link" ? <Text style={{ color: t.muted, fontSize: 11, marginBottom: 4 }}>{domainOf(draft.text ?? "")}</Text> : null}
-                <Text style={{ color: t.fg, fontSize: 14, lineHeight: 21 }} numberOfLines={12}>
-                  {draft.text}
-                </Text>
-              </View>
-            )}
-            <View style={styles.foot}>
-              <Text style={{ color: t.origin, fontWeight: "600", fontSize: 13, flex: 1 }}>{session?.name}</Text>
-              <Text style={[styles.badge, { backgroundColor: t.chip, color: t.cardMuted }]}>
-                {draft.kind === "image" && png ? bytes(png.length) : draft.kind === "files" ? `파일 ${draft.files?.length ?? 0}개` : `${[...(draft.text ?? "")].length}자`}
-              </Text>
-            </View>
-          </View>
-        )}
-        {draft ? (
-          <Text style={{ color: limit ? t.danger : t.muted, fontSize: 13, lineHeight: 19, paddingHorizontal: 4 }}>
-            {limit ?? "이 폰에서 암호화한 뒤 올라가요. 연결된 모든 기기의 히스토리에 바로 나타나요."}
-          </Text>
-        ) : null}
-        {error && draft ? <Text style={{ color: t.danger, fontSize: 13, paddingHorizontal: 4 }}>{error}</Text> : null}
-      </ScrollView>
-
-      <View style={styles.actions}>
-        <Button title="히스토리에 올리기" onPress={() => void send()} busy={busy} disabled={!draft || !!limit || !engine} />
-        <Button title="취소" kind="secondary" onPress={close} style={{ height: 48 }} />
+      <View style={styles.sectionRow}>
+        <Text style={[styles.section, { color: t.muted }]}>클립보드</Text>
+        {clip ? <Text style={{ color: t.muted, fontSize: 12 }}>터치하면 바로 올라가요</Text> : null}
       </View>
+
+      {clip === undefined ? (
+        <View style={[styles.empty, { borderColor: t.chipStrong }]}>
+          <ActivityIndicator />
+        </View>
+      ) : clip === null ? (
+        <View style={[styles.empty, { borderColor: t.chipStrong }]}>
+          <Text style={{ color: t.muted, fontSize: 15, fontWeight: "600" }}>클립보드가 비어 있어요</Text>
+          <Text style={{ color: t.muted, fontSize: 13, lineHeight: 19, textAlign: "center" }}>다른 앱에서 복사한 뒤 다시 열면{"\n"}여기에 미리보기가 나와요.</Text>
+        </View>
+      ) : (
+        <>
+          <DraftCard draft={clip} from={session?.name} onPress={() => void sendClipboard()} busy={busy === "clipboard"} disabled={disabled || !!limit} />
+          {limit ? <Text style={[styles.note, { color: t.danger }]}>{limit}</Text> : null}
+        </>
+      )}
+
+      {Platform.OS === "ios" ? (
+        <Text style={[styles.note, { color: t.muted }]}>iOS가 붙여넣기를 물어보면 허용해 주세요. 설정 → Pinchy → 다른 앱에서 붙여넣기를 "허용"으로 두면 다시 묻지 않아요.</Text>
+      ) : null}
     </View>
   );
 }
 
+function Row({ glyph, title, hint, busy, disabled, onPress }: { glyph: string; title: string; hint: string; busy: boolean; disabled: boolean; onPress: () => void }) {
+  const t = useTheme();
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={title}
+      style={({ pressed }) => [styles.row, { opacity: pressed ? 0.7 : disabled && !busy ? 0.5 : 1 }]}
+    >
+      <View style={[styles.glyphBox, { backgroundColor: t.dark ? "rgba(255,102,82,0.2)" : "rgba(255,102,82,0.14)" }]}>
+        {busy ? <ActivityIndicator color={t.accentStrong} /> : <Text style={{ color: t.accentStrong, fontSize: 18, fontWeight: "700" }}>{glyph}</Text>}
+      </View>
+      <View style={{ flex: 1, gap: 2 }}>
+        <Text style={{ color: t.cardFg, fontSize: 16, fontWeight: "600" }}>{title}</Text>
+        <Text style={{ color: t.cardMuted, fontSize: 12 }}>{hint}</Text>
+      </View>
+      <Text style={{ color: t.cardMuted, fontSize: 18 }}>›</Text>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
-  screen: { flex: 1, paddingHorizontal: 20 },
-  grip: { alignItems: "center", paddingTop: 10, paddingBottom: 8 },
-  gripBar: { width: 40, height: 5, borderRadius: 3 },
-  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 14 },
-  title: { fontSize: 20, fontWeight: "800", letterSpacing: -0.4 },
-  content: { gap: 14, paddingBottom: 16 },
-  center: { paddingVertical: 60, paddingHorizontal: 20 },
-  card: { borderRadius: 16, overflow: "hidden" },
-  head: { height: 44, paddingTop: 7, paddingHorizontal: 14 },
-  kind: { color: "#fff", fontSize: 15, fontWeight: "600", lineHeight: 18 },
-  time: { color: "rgba(255,255,255,0.9)", fontSize: 12, lineHeight: 15 },
-  image: { marginHorizontal: 14, marginTop: 12, height: 220, borderRadius: 10 },
-  foot: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
-  badge: { height: 22, lineHeight: 22, paddingHorizontal: 7, borderRadius: 7, fontSize: 13, fontWeight: "600" },
-  actions: { gap: 10, paddingTop: 8 },
+  sheet: { paddingTop: 14, paddingHorizontal: 20, gap: 0 },
+  group: { borderRadius: radius.card, overflow: "hidden" },
+  row: { flexDirection: "row", alignItems: "center", gap: 14, height: 60, paddingHorizontal: 16 },
+  glyphBox: { width: 36, height: 36, borderRadius: 10, alignItems: "center", justifyContent: "center" },
+  separator: { height: 1, marginLeft: 66 },
+  sectionRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginTop: 22, marginBottom: 10, paddingHorizontal: 4 },
+  section: { fontSize: 13, fontWeight: "700", letterSpacing: 0.2 },
+  empty: { alignItems: "center", gap: 6, paddingVertical: 26, paddingHorizontal: 20, borderRadius: radius.card, borderWidth: 1.5, borderStyle: "dashed" },
+  note: { marginTop: 10, paddingHorizontal: 4, fontSize: 12, lineHeight: 18 },
 });

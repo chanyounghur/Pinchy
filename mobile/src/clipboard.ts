@@ -83,7 +83,8 @@ function appOf(_intent: ShareIntent): string | undefined {
   return undefined;
 }
 
-async function toPng(uri: string, mimeType: string): Promise<Uint8Array> {
+/// Reads an image file as PNG bytes, converting other formats on the way.
+export async function toPng(uri: string, mimeType: string): Promise<Uint8Array> {
   if (mimeType === "image/png") return new File(uri).bytes();
   const context = ImageManipulator.manipulate(uri);
   const rendered = await context.renderAsync();

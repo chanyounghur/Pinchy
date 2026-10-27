@@ -26,7 +26,7 @@ export default function History() {
   const share = useShareIntentContext();
 
   useEffect(() => {
-    if (session && share.hasShareIntent) router.push("/add?source=share");
+    if (session && share.hasShareIntent) router.push("/upload?source=share");
   }, [session, share.hasShareIntent, router]);
 
   useEffect(() => {
@@ -133,11 +133,13 @@ export default function History() {
       />
       <View pointerEvents="box-none" style={[styles.fabWrap, { bottom: insets.bottom + 16 }]}>
         <Pressable
-          onPress={() => router.push("/add?source=clipboard")}
+          onPress={() => router.push("/add")}
           style={({ pressed }) => [styles.fab, { backgroundColor: t.accentStrong, opacity: pressed ? 0.85 : 1 }]}
           accessibilityRole="button"
+          accessibilityLabel="추가"
         >
-          <Text style={styles.fabText}>클립보드 붙여넣기</Text>
+          <Text style={styles.fabPlus}>+</Text>
+          <Text style={styles.fabText}>추가</Text>
         </Pressable>
       </View>
     </View>
@@ -160,6 +162,7 @@ const styles = StyleSheet.create({
   list: { paddingHorizontal: 20, paddingTop: 14 },
   empty: { paddingTop: 120, paddingHorizontal: 30 },
   fabWrap: { position: "absolute", left: 20, right: 20, alignItems: "center" },
-  fab: { height: 52, paddingHorizontal: 22, borderRadius: 26, alignItems: "center", justifyContent: "center", shadowColor: "#d8432b", shadowOpacity: 0.35, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
-  fabText: { color: "#fff", fontSize: 15, fontWeight: "700" },
+  fab: { height: 52, paddingHorizontal: 22, borderRadius: 26, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, shadowColor: "#d8432b", shadowOpacity: 0.35, shadowRadius: 22, shadowOffset: { width: 0, height: 8 }, elevation: 6 },
+  fabPlus: { color: "#fff", fontSize: 22, fontWeight: "700", lineHeight: 24, marginTop: -2 },
+  fabText: { color: "#fff", fontSize: 16, fontWeight: "700" },
 });
