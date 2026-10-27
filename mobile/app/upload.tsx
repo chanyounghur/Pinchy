@@ -50,7 +50,7 @@ export default function Upload() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fromShare]);
 
-  const limit = useMemo(() => (draft ? tooLarge(draft, policy?.max_blob_mb ?? 64) : null), [draft, policy]);
+  const limit = useMemo(() => (draft ? tooLarge(draft, policy?.max_blob_mb ?? 128) : null), [draft, policy]);
 
   const close = () => {
     if (fromShare) share.resetShareIntent();
@@ -64,7 +64,7 @@ export default function Upload() {
     try {
       await upload(engine, session.name, draft);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      toast("올렸어요");
+      toast("업로드했어요");
       close();
     } catch (e) {
       setError(e instanceof Error ? e.message : "올리지 못했어요.");
@@ -84,7 +84,7 @@ export default function Upload() {
         <View style={[styles.gripBar, { backgroundColor: t.chipStrong }]} />
       </View>
       <View style={styles.titleRow}>
-        <Text style={[styles.title, { color: t.fg }]}>Pinchy에 추가</Text>
+        <Text style={[styles.title, { color: t.fg }]}>업로드</Text>
         <Text style={{ color: t.muted, fontSize: 13, fontWeight: "500" }}>{fromShare ? "공유됨" : "이 폰에서"}</Text>
       </View>
 
@@ -105,7 +105,7 @@ export default function Upload() {
       </ScrollView>
 
       <View style={styles.actions}>
-        <Button title="히스토리에 올리기" onPress={() => void send()} busy={busy} disabled={!draft || !!limit || !engine} />
+        <Button title="히스토리에 업로드" onPress={() => void send()} busy={busy} disabled={!draft || !!limit || !engine} />
         <Button title="취소" kind="secondary" onPress={close} style={{ height: 48 }} />
       </View>
     </View>

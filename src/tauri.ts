@@ -15,7 +15,7 @@ let mockShare: { name: string; server: string; device_id: string } | null =
   !isTauri && new URLSearchParams(window.location.search).get("demo") === "share"
     ? { name: "Chanyoung’s MacBook Air", server: "https://example.iptime.org", device_id: "a1" }
     : null;
-const mockPolicy = { retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed: false, usage: { items: 1240, bytes: 183500800 } };
+const mockPolicy = { retention_days: 30, max_storage_mb: 10240, max_blob_mb: 128, sync_concealed: false, usage: { items: 1240, bytes: 183500800 } };
 const mockQr = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges"><rect width="8" height="8" fill="#fff"/><path d="M0 0h3v3H0zM5 0h3v3H5zM0 5h3v3H0zM4 4h1v1H4zM6 5h1v1H6zM5 7h1v1H5z" fill="#000"/></svg>';
 let mockDevices = [
   { id: "a1", name: "Chanyoung’s MacBook Air", created_at: Date.now() - 86_400_000, last_seen: Date.now(), me: true },

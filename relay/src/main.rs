@@ -59,11 +59,11 @@ struct Args {
     retention_days: u32,
 
     /// Largest total history, in megabytes; the oldest items go first.
-    #[arg(long, env = "PINCHY_RELAY_MAX_STORAGE_MB", default_value_t = 1024)]
+    #[arg(long, env = "PINCHY_RELAY_MAX_STORAGE_MB", default_value_t = 10240)]
     max_storage_mb: u64,
 
     /// Largest accepted image or file, in megabytes.
-    #[arg(long, env = "PINCHY_RELAY_MAX_BLOB_MB", default_value_t = 64)]
+    #[arg(long, env = "PINCHY_RELAY_MAX_BLOB_MB", default_value_t = 128)]
     max_blob_mb: u64,
 
     /// Also sync copies that the source app marked as concealed, such as

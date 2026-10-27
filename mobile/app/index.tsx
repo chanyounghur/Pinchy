@@ -126,10 +126,10 @@ export default function History() {
           onPress={() => router.push("/add")}
           style={({ pressed }) => [styles.fab, { backgroundColor: t.accentStrong, opacity: pressed ? 0.85 : 1 }]}
           accessibilityRole="button"
-          accessibilityLabel="추가"
+          accessibilityLabel="업로드"
         >
           <Text style={styles.fabPlus}>+</Text>
-          <Text style={styles.fabText}>추가</Text>
+          <Text style={styles.fabText}>업로드</Text>
         </Pressable>
       </View>
     </View>

@@ -228,7 +228,7 @@ export default function ShareSettings() {
       <div className="share-summary">
         <div><span>서버</span><strong>{saved.server.replace(/^https?:\/\//, "")}</strong></div>
       </div>
-      <p className="note">연결된 모든 기기가 같은 히스토리를 가져요. 어느 기기에서 복사하든 모두에 쌓이고, 지우면 모두에서 지워져요. 파일은 합쳐서 50MB까지만 올라가고, 폴더와 더 큰 파일은 이 기기에만 남아요.</p>
+      <p className="note">연결된 모든 기기가 같은 히스토리를 가져요. 어느 기기에서 복사하든 모두에 쌓이고, 지우면 모두에서 지워져요. 파일은 합쳐서 128MB까지만 올라가고, 폴더와 더 큰 파일은 이 기기에만 남아요.</p>
       {status?.state === "error" && <p className="update-error" role="alert">{status.message}</p>}
       <ul className="share-devices" aria-label="연결된 기기">
         {(devices ?? []).map((d) => <li key={d.id}>

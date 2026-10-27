@@ -36,7 +36,7 @@ export function DraftCard({
       onPress={onPress}
       disabled={!pressable || disabled || busy}
       accessibilityRole={pressable ? "button" : undefined}
-      accessibilityLabel={pressable ? `${kind} 바로 올리기` : undefined}
+      accessibilityLabel={pressable ? `${kind} 바로 업로드` : undefined}
       style={({ pressed }) => [
         styles.card,
         { backgroundColor: t.card, opacity: pressed ? 0.85 : 1 },
@@ -76,7 +76,7 @@ export function DraftCard({
       </View>
       {pressable ? (
         <View style={[styles.band, { backgroundColor: t.accentStrong, opacity: disabled ? 0.5 : 1 }]}>
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.bandText}>↑ 이대로 올리기</Text>}
+          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.bandText}>↑ 이대로 업로드</Text>}
         </View>
       ) : null}
     </Pressable>

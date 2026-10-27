@@ -24,7 +24,7 @@ export default function Add() {
   const insets = useSafeAreaInsets();
   const [clip, setClip] = useState<Draft | null | undefined>(undefined);
   const [busy, setBusy] = useState<Busy>(null);
-  const maxMb = policy?.max_blob_mb ?? 64;
+  const maxMb = policy?.max_blob_mb ?? 128;
 
   useEffect(() => {
     let cancelled = false;
@@ -62,7 +62,7 @@ export default function Add() {
     try {
       await upload(engine, session.name, clip);
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      toast("올렸어요");
+      toast("업로드했어요");
       router.back();
     } catch (e) {
       toast(e instanceof Error ? e.message : "올리지 못했어요");
@@ -78,7 +78,7 @@ export default function Add() {
       <View style={[styles.group, { backgroundColor: t.card }]}>
         <Row
           glyph="◫"
-          title="사진 올리기"
+          title="사진 업로드"
           hint="앨범에서 고르기 · 여러 장도 돼요"
           busy={busy === "photos"}
           disabled={disabled}
@@ -87,7 +87,7 @@ export default function Add() {
         <View style={[styles.separator, { backgroundColor: t.separator }]} />
         <Row
           glyph="▤"
-          title="파일 올리기"
+          title="파일 업로드"
           hint={`파일 앱에서 고르기 · 최대 ${maxMb}MB`}
           busy={busy === "files"}
           disabled={disabled}

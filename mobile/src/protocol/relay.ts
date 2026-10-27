@@ -121,7 +121,7 @@ export class Relay {
     return {
       retention_days: raw.retention_days ?? 30,
       max_storage_mb: raw.max_storage_mb ?? 1024,
-      max_blob_mb: raw.max_blob_mb ?? 64,
+      max_blob_mb: raw.max_blob_mb ?? 128,
       sync_concealed: raw.sync_concealed ?? false,
       usage: raw.usage ?? null,
     };

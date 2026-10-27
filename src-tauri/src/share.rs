@@ -73,7 +73,7 @@ const INITIAL_KEY: &str = "initial_sync_done";
 const MB: u64 = 1024 * 1024;
 /// Largest total size of the files in one item. Below the relay's default
 /// blob limit of 64MB.
-pub const MAX_FILES_BYTES: u64 = 50 * MB;
+pub const MAX_FILES_BYTES: u64 = 128 * MB;
 /// Longest received file name, in UTF-8 bytes. File systems allow 255.
 const MAX_FILE_NAME_BYTES: usize = 200;
 
@@ -1851,7 +1851,7 @@ mod tests {
         let (files, blob) = read_files(&list(&[&a, &b])).unwrap();
         assert_eq!(files, vec![FileMeta { name: "a.txt".into(), size: 5 }, FileMeta { name: "b.bin".into(), size: 3 }]);
         assert_eq!(blob, b"hello\x00\x01\x02");
-        assert!(file_list(&list(&[&big])).unwrap_err().contains("50MB"));
+        assert!(file_list(&list(&[&big])).unwrap_err().contains("128MB"));
         assert!(file_list(&list(&[&a, &dir.join("folder")])).unwrap_err().contains("폴더"));
         assert!(file_list(&list(&[&dir.join("missing")])).is_err());
         std::fs::remove_dir_all(dir).unwrap();
@@ -1898,7 +1898,7 @@ mod tests {
     #[test]
     fn concealed_copies_stay_local_unless_the_relay_allows_them() {
         let policy = |sync_concealed| Policy {
-            retention_days: 30, max_storage_mb: 1024, max_blob_mb: 64, sync_concealed, usage: None,
+            retention_days: 30, max_storage_mb: 10240, max_blob_mb: 128, sync_concealed, usage: None,
         };
         assert!(syncable(&item("text", "x", false), &policy(false)));
         assert!(syncable(&item("link", "https://a", false), &policy(false)));

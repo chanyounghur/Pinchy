@@ -36,8 +36,8 @@ pinchy-relay --listen 0.0.0.0:8443 --domain <도메인>
 | `--contact` | `PINCHY_RELAY_CONTACT` | Let's Encrypt 만료 알림을 받을 이메일 |
 | `--staging` | `PINCHY_RELAY_STAGING` | Let's Encrypt 테스트 환경 사용 (브라우저가 신뢰하지 않는 인증서) |
 | `--retention-days` | `PINCHY_RELAY_RETENTION_DAYS` | 마지막으로 복사한 뒤 이 기간이 지난 항목을 모든 기기에서 삭제. 기본값 30일 |
-| `--max-storage-mb` | `PINCHY_RELAY_MAX_STORAGE_MB` | 히스토리 최대 용량. 넘으면 오래된 항목부터 삭제. 기본값 1,024MB |
-| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 64MB. Pinchy는 파일을 한 번에 50MB까지 올리므로 그보다 크게 두세요 |
+| `--max-storage-mb` | `PINCHY_RELAY_MAX_STORAGE_MB` | 히스토리 최대 용량. 넘으면 오래된 항목부터 삭제. 기본값 10,240MB(10GB) |
+| `--max-blob-mb` | `PINCHY_RELAY_MAX_BLOB_MB` | 이미지·파일 최대 크기. 기본값 128MB. Pinchy는 파일을 한 번에 128MB까지 올리므로 그보다 작게 두지 마세요 |
 | `--sync-concealed` | `PINCHY_RELAY_SYNC_CONCEALED` | 비밀번호 관리자처럼 원본 앱이 "숨김"으로 표시한 복사도 동기화. 기본값 꺼짐. 서버는 내용을 볼 수 없으므로 각 기기가 복사 시점에 이 설정을 따릅니다 |
 | `--updates-source` | `PINCHY_RELAY_UPDATES_SOURCE` | 휴대폰 앱의 OTA 업데이트 manifest를 가져올 곳. 기본값은 이 저장소 `main`의 `mobile/updates`. 릴리즈 워크플로가 서명해 올린 manifest를 5분 캐시로 전달하며, 릴레이는 서명 키가 없어 내용을 바꿀 수 없습니다 |
 | `--no-updates` | `PINCHY_RELAY_NO_UPDATES` | 휴대폰 앱 업데이트를 내려주지 않음 |
