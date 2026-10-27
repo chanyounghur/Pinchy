@@ -23,7 +23,7 @@ const SINCE = "since";
 const INITIAL_DONE = "initial_done";
 const WAIT_SECS = 25;
 const POLICY_REFRESH_MS = 10 * 60 * 1000;
-const RETRY_MS = [2000, 5000, 10000, 30000];
+const RETRY_MS = [1000, 3000, 10000, 30000];
 
 export class SyncEngine {
   status: SyncStatus = { state: "idle" };
@@ -123,7 +123,14 @@ export class SyncEngine {
           this.running = false;
           break;
         }
-        this.setStatus({ state: "offline", message: e instanceof Error ? e.message : String(e) });
+        if (failures === 0 && this.status.state !== "offline") {
+          // One failed request is usually the OS having cut the long-poll
+          // while the app was away, not a dead network: show "syncing" and
+          // try again before calling it offline.
+          if (this.status.state !== "syncing") this.setStatus({ state: "syncing", initial: false });
+        } else {
+          this.setStatus({ state: "offline", message: e instanceof Error ? e.message : String(e) });
+        }
         await this.sleep(RETRY_MS[Math.min(failures, RETRY_MS.length - 1)]!);
         failures++;
       }
