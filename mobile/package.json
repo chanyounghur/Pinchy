@@ -1,6 +1,6 @@
 {
   "name": "pinchy-mobile",
-  "version": "1.0.4",
+  "version": "1.0.5",
   "private": true,
   "main": "expo-router/entry",
   "scripts": {
@@ -44,5 +44,8 @@
     "@types/react": "~19.3.0",
     "tsx": "^4.23.15",
     "typescript": "~5.9.3"
+  },
+  "patchedDependencies": {
+    "expo-share-intent@9.0.0": "patches/expo-share-intent@9.0.0.patch"
   }
 }

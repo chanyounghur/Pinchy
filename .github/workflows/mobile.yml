@@ -179,7 +179,30 @@ jobs:
             -destination 'generic/platform=iOS' -archivePath "$RUNNER_TEMP/Pinchy.xcarchive" archive \
             CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" DEVELOPMENT_TEAM=""
           test -d "$RUNNER_TEMP/Pinchy.xcarchive/Products/Applications/Pinchy.app"
-      - name: Package the unsigned IPA
+      # An unsigned binary carries no entitlements, so AltStore and SideStore
+      # never learn that the app and its share extension need an app group and
+      # re-sign them without one; the extension then crashes as soon as it is
+      # picked. An ad-hoc signature embeds the entitlements for the sideloader
+      # to read, and it replaces the signature with the user's own anyway.
+      - name: Ad-hoc sign so sideloaders see the entitlements
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          app="$RUNNER_TEMP/Pinchy.xcarchive/Products/Applications/Pinchy.app"
+          appex="$app/PlugIns/ShareExtension.appex"
+          test -d "$appex"
+          if [ -d "$app/Frameworks" ]; then
+            find "$app/Frameworks" -mindepth 1 -maxdepth 1 \( -name '*.framework' -o -name '*.dylib' \) \
+              -exec codesign --force --sign - {} \;
+          fi
+          codesign --force --sign - --entitlements ios/ShareExtension/ShareExtension.entitlements "$appex"
+          codesign --force --sign - --entitlements ios/Pinchy/Pinchy.entitlements "$app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          group="group.$(node -p "require('./app.json').expo.ios.bundleIdentifier")"
+          for bundle in "$app" "$appex"; do
+            codesign -d --entitlements - --xml "$bundle" | grep -F "<string>$group</string>"
+          done
+      - name: Package the IPA
         working-directory: mobile
         run: |
           set -euo pipefail
@@ -231,7 +254,7 @@ jobs:
 
           데스크톱 Pinchy 1.0 이상이 연결된 릴레이 서버의 히스토리를 폰에서 봅니다. 설치와 연결 방법은 [mobile/README.md](https://github.com/chanyounghur/Pinchy/blob/main/mobile/README.md)를 보세요.
 
-          - **iPhone**: \`Pinchy-$version.ipa\` (미서명). AltStore·SideStore에 소스 \`https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/altstore.json\`을 추가하면 목록에 나타나고, 설치할 때 내 Apple ID로 서명돼요.
+          - **iPhone**: \`Pinchy-$version.ipa\`. AltStore·SideStore에 소스 \`https://raw.githubusercontent.com/chanyounghur/Pinchy/main/mobile/altstore.json\`을 추가하면 목록에 나타나고, 설치할 때 내 Apple ID로 서명돼요.
           - **Android**: \`Pinchy-$version.apk\`를 받아 설치해요. 이전 버전 위에 그대로 설치됩니다.
           - 이미 설치된 같은 런타임의 앱은 다시 설치하지 않아도 돼요. 릴레이가 이 릴리즈의 업데이트를 내려주고, 앱이 다음에 열릴 때 적용돼요. 나머지 파일은 그 업데이트의 번들과 에셋이에요.
           NOTES

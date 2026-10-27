@@ -1,0 +1,76 @@
+diff --git a/ios/ExpoShareIntentModule.swift b/ios/ExpoShareIntentModule.swift
+index e52b6d089f8625d399c371daf14a9fe010d5fede..dfe97689fffd1637354b29f511b19355d7f7ecbd 100644
+--- a/ios/ExpoShareIntentModule.swift
++++ b/ios/ExpoShareIntentModule.swift
+@@ -162,9 +162,10 @@ public class ExpoShareIntentModule: Module {
+     }
+ 
+     private func getAppGroupIdentifier() -> String? {
+-        let appGroupIdentifier: String? =
++        let configured: String? =
+             Bundle.main.object(forInfoDictionaryKey: "AppGroupIdentifier")
+             as? String
++        let appGroupIdentifier = configured.map { self.resolveAppGroupIdentifier(configured: $0) }
+         if appGroupIdentifier == nil {
+             self.sendEvent(
+                 "onError",
+@@ -176,6 +177,25 @@ public class ExpoShareIntentModule: Module {
+         return appGroupIdentifier
+     }
+ 
++    // Sideloaders such as AltStore and SideStore re-sign the app with the team
++    // ID appended to every app group (group.x -> group.x.TEAMID) and list the
++    // groups they granted under ALTAppGroups in Info.plist. The share extension
++    // resolves the group the same way, so both sides meet in the same container.
++    private func resolveAppGroupIdentifier(configured: String) -> String {
++        let fileManager = FileManager.default
++        if fileManager.containerURL(forSecurityApplicationGroupIdentifier: configured) != nil {
++            return configured
++        }
++        let granted = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String] ?? []
++        for candidate in granted where candidate.hasPrefix(configured + ".") {
++            if fileManager.containerURL(forSecurityApplicationGroupIdentifier: candidate) != nil {
++                NSLog("Using re-signed app group \(candidate) instead of \(configured)")
++                return candidate
++            }
++        }
++        return configured
++    }
++
+     private func getAbsolutePath(for identifier: String) -> String? {
+         if identifier.starts(with: "file://") || identifier.starts(with: "/var/mobile/Media")
+             || identifier.starts(with: "/private/var/mobile")
+diff --git a/plugin/build/ios/ShareExtensionViewController.swift b/plugin/build/ios/ShareExtensionViewController.swift
+index f1f4b726dfe3a7bd9e341e74c6d09b22becddf2f..45f740efd4dd9b7bc5067444daf6fde3e60d96df 100644
+--- a/plugin/build/ios/ShareExtensionViewController.swift
++++ b/plugin/build/ios/ShareExtensionViewController.swift
+@@ -10,7 +10,28 @@ import Social
+ import UIKit
+ 
+ class ShareViewController: UIViewController {
+-  let hostAppGroupIdentifier: String = "<GROUPIDENTIFIER>"
++  // The group as the config plugin set it. Sideloaders such as AltStore and
++  // SideStore re-sign the app with the team ID appended to every app group
++  // (group.x -> group.x.TEAMID) and list the groups they granted under
++  // ALTAppGroups in each bundle's Info.plist, so the effective group is looked
++  // up at runtime instead of trusting the literal.
++  let hostAppGroupIdentifier: String = ShareViewController.resolveAppGroupIdentifier(
++    configured: "<GROUPIDENTIFIER>")
++
++  static func resolveAppGroupIdentifier(configured: String) -> String {
++    let fileManager = FileManager.default
++    if fileManager.containerURL(forSecurityApplicationGroupIdentifier: configured) != nil {
++      return configured
++    }
++    let granted = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String] ?? []
++    for candidate in granted where candidate.hasPrefix(configured + ".") {
++      if fileManager.containerURL(forSecurityApplicationGroupIdentifier: candidate) != nil {
++        NSLog("Using re-signed app group \(candidate) instead of \(configured)")
++        return candidate
++      }
++    }
++    return configured
++  }
+   let shareProtocol: String = "<SCHEME>"
+   let sharedKey: String = "<SCHEME>ShareKey"
+   let hideView: Bool = <HIDEVIEW>

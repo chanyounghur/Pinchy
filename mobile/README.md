@@ -22,7 +22,7 @@
 
 ### iPhone
 
-IPA는 서명되어 있지 않으며, 설치하는 사람의 Apple ID로 서명해 넣습니다. 무료 Apple ID로도 되지만 7일마다 다시 서명해야 하고, AltStore·SideStore가 이를 자동으로 해 줍니다.
+IPA는 Apple 인증서로 서명되어 있지 않으며(사이드로더가 앱 그룹 권한을 읽을 수 있게 ad-hoc 서명만 되어 있습니다), 설치하는 사람의 Apple ID로 서명해 넣습니다. 무료 Apple ID로도 되지만 7일마다 다시 서명해야 하고, AltStore·SideStore가 이를 자동으로 해 줍니다.
 
 1. 맥에 [AltServer](https://altstore.io)를 설치하고, 폰을 USB로 연결해 Finder에서 "Wi-Fi에서 이 iPhone 보기"를 켭니다.
 2. AltServer 메뉴 → Install AltStore → 폰 선택 → Apple ID 로그인. 폰에서 설정 → 일반 → VPN 및 기기 관리에서 그 Apple ID를 신뢰하고, 설정 → 개인정보 보호 및 보안에서 **개발자 모드**를 켭니다.
@@ -34,7 +34,7 @@ IPA는 서명되어 있지 않으며, 설치하는 사람의 Apple ID로 서명�
 
 4. 설치. 이후 같은 Wi-Fi에 맥이 켜져 있으면 AltStore가 백그라운드에서 재서명하고, 새 릴리즈는 AltStore에 업데이트로 뜹니다.
 
-집 밖에서도 재서명이 되게 하려면 [SideStore](https://sidestore.io)를 쓰면 됩니다. 소스 주소는 같습니다. 무료 계정은 동시에 앱 3개까지만 서명할 수 있고(AltStore 자체 포함), 사이드로딩에 쓰는 Apple ID가 가끔 보안 잠금을 받는 사례가 있으니 전용 Apple ID를 하나 만들어 쓰는 편이 안전합니다. 다른 앱에서 공유 시트로 보내는 기능은 앱 안의 확장(share extension)이 함께 서명되어야 하므로, AltStore가 확장을 포함해 설치하겠는지 물으면 **포함**을 고르세요.
+집 밖에서도 재서명이 되게 하려면 [SideStore](https://sidestore.io)를 쓰면 됩니다. 소스 주소는 같습니다. 무료 계정은 동시에 앱 3개까지만 서명할 수 있고(AltStore 자체 포함), 사이드로딩에 쓰는 Apple ID가 가끔 보안 잠금을 받는 사례가 있으니 전용 Apple ID를 하나 만들어 쓰는 편이 안전합니다. 다른 앱에서 공유 시트로 보내는 기능은 앱 안의 확장(share extension)이 함께 서명되어야 하므로, AltStore가 확장을 포함해 설치하겠는지 물으면 **포함**을 고르세요. 공유 시트에서 Pinchy를 고르자마자 시트가 닫히기만 한다면 1.0.4 이하의 IPA라서 그렇습니다. AltStore에서 1.0.5 이상으로 업데이트하면 됩니다. 공유 확장은 네이티브 코드라 앱 안의 업데이트로는 고쳐지지 않습니다.
 
 ## 업데이트
 
