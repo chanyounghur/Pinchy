@@ -7,7 +7,7 @@ import React, { useMemo } from "react";
 import { ActivityIndicator, Pressable, StyleSheet, Text, View } from "react-native";
 import { encodeBase64 } from "../protocol/base64";
 import type { Draft } from "../upload";
-import { bytes, domainOf } from "./format";
+import { bytes, domainOf, isPhotoBundle } from "./format";
 import { radius, useTheme } from "./theme";
 
 export function DraftCard({
@@ -26,8 +26,9 @@ export function DraftCard({
   const t = useTheme();
   const png = draft.png;
   const pngUri = useMemo(() => (png ? `data:image/png;base64,${encodeBase64(png)}` : null), [png]);
-  const kind = draft.kind === "image" ? "이미지" : draft.kind === "files" ? "파일" : draft.kind === "link" ? "링크" : "텍스트";
-  const badge = draft.kind === "image" && png ? bytes(png.length) : draft.kind === "files" ? `파일 ${draft.files?.length ?? 0}개` : `${[...(draft.text ?? "")].length}자`;
+  const photos = isPhotoBundle(draft.kind, draft.files);
+  const kind = draft.kind === "image" ? "이미지" : photos ? "사진" : draft.kind === "files" ? "파일" : draft.kind === "link" ? "링크" : "텍스트";
+  const badge = draft.kind === "image" && png ? bytes(png.length) : photos ? `사진 ${draft.files?.length ?? 0}장` : draft.kind === "files" ? `파일 ${draft.files?.length ?? 0}개` : `${[...(draft.text ?? "")].length}자`;
   const pressable = !!onPress;
 
   return (

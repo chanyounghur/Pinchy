@@ -3,13 +3,11 @@
 
 import { useShareIntentContext } from "expo-share-intent";
 import { Redirect, useRouter } from "expo-router";
-import * as Haptics from "expo-haptics";
 import React, { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useItemActions } from "@/actions";
 import { useApp, useItems } from "@/app-context";
-import { copyItem } from "@/clipboard";
-import type { Item } from "@/store/db";
 import { ItemCard } from "@/ui/ItemCard";
 import { useTheme } from "@/ui/theme";
 import { useToast } from "@/ui/Toast";
@@ -33,23 +31,7 @@ export default function History() {
     if (updateReady) toast("새 버전을 받았어요. 다시 열면 적용돼요");
   }, [updateReady, toast]);
 
-  const copy = useCallback(
-    async (item: Item) => {
-      if (!engine) return;
-      try {
-        const result = await copyItem(engine, item);
-        if (result === "copied") {
-          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          toast("복사됨");
-        } else if (result === "pending") {
-          toast("아직 받는 중이에요");
-        }
-      } catch (e) {
-        toast(e instanceof Error ? e.message : "복사하지 못했어요");
-      }
-    },
-    [engine, toast],
-  );
+  const { copy, act } = useItemActions();
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -114,7 +96,15 @@ export default function History() {
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
-        renderItem={({ item }) => <ItemCard item={item} onPress={() => void copy(item)} onLongPress={() => router.push(`/item/${item.id}`)} />}
+        renderItem={({ item }) => (
+          <ItemCard
+            item={item}
+            onPress={() => void copy(item)}
+            onLongPress={() => router.push(`/item/${item.id}`)}
+            onOpenPicture={(i) => router.push(`/view/${item.id}?index=${i}`)}
+            onAction={() => void act(item)}
+          />
+        )}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 120 }]}
         ItemSeparatorComponent={() => <View style={{ height: 12 }} />}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={t.muted} />}

@@ -53,6 +53,7 @@ def update(source, version, size, date, notes=None):
                 "privacy": {
                     "NSCameraUsageDescription": "데스크톱 Pinchy의 QR을 찍어 연결할 때만 카메라를 써요.",
                     "NSPhotoLibraryUsageDescription": "앨범에서 고른 사진을 히스토리에 올릴 때만 사진을 써요.",
+                    "NSPhotoLibraryAddUsageDescription": "히스토리의 사진을 앨범에 저장할 때만 써요.",
                 },
             },
         }

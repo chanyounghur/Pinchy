@@ -27,7 +27,15 @@ export function bytes(n: number): string {
   return `${(n / 1024 / 1024 / 1024).toFixed(2)} GB`;
 }
 
-export function kindLabel(kind: string): string {
+const PHOTO_EXT = /\.(jpe?g|png|heic|heif|webp|gif|bmp|tiff?)$/i;
+
+/// A file bundle made only of pictures: drawn as a photo grid and called "사진".
+export function isPhotoBundle(kind: string, files: { name: string }[] | null | undefined): boolean {
+  return kind === "files" && !!files && files.length > 0 && files.every((f) => PHOTO_EXT.test(f.name));
+}
+
+export function kindLabel(kind: string, files?: { name: string }[] | null): string {
+  if (isPhotoBundle(kind, files)) return "사진";
   switch (kind) {
     case "text":
       return "텍스트";

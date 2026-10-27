@@ -4,6 +4,7 @@
 import * as Clipboard from "expo-clipboard";
 import { File } from "expo-file-system";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
+import * as MediaLibrary from "expo-media-library";
 import * as Sharing from "expo-sharing";
 import type { ShareIntent } from "expo-share-intent";
 import { decodeBase64, encodeBase64 } from "./protocol/base64";
@@ -99,4 +100,51 @@ export async function toPng(uri: string, mimeType: string): Promise<Uint8Array> 
 function dataUriBytes(data: string): Uint8Array | null {
   const comma = data.indexOf(",");
   return decodeBase64(comma >= 0 ? data.slice(comma + 1) : data);
+}
+
+/// Every picture of an item as local file URIs, in order: the one PNG of an
+/// image item, or each file of a photo bundle. The caller makes sure the blob
+/// is here first.
+export function imageUris(item: Item): string[] {
+  if (item.kind === "image") return [imageFile(item.id).uri];
+  if (item.kind === "files" && item.files) return item.files.map((_, i) => fileFor(item.id, item.files!, i).uri);
+  return [];
+}
+
+/// Puts one picture of an item on the clipboard as PNG.
+export async function copyPicture(item: Item, index: number): Promise<void> {
+  const uri = imageUris(item)[index];
+  if (!uri) throw new Error("아직 받는 중이에요");
+  const name = item.kind === "image" ? "x.png" : (item.files?.[index]?.name ?? "");
+  const png = await toPng(uri, mimeOf(name));
+  await Clipboard.setImageAsync(encodeBase64(png));
+}
+
+/// Saves pictures of an item to the photo album; all of them when no index
+/// is given. Asks for add-only access the first time.
+export async function savePictures(item: Item, index?: number): Promise<number> {
+  const uris = imageUris(item);
+  const chosen = index === undefined ? uris : uris.slice(index, index + 1);
+  if (chosen.length === 0) throw new Error("아직 받는 중이에요");
+  const permission = await MediaLibrary.requestPermissionsAsync(true);
+  if (!permission.granted) throw new Error("사진 앱에 추가할 권한이 없어요. 설정에서 허용해 주세요.");
+  for (const uri of chosen) await MediaLibrary.Asset.create(uri);
+  return chosen.length;
+}
+
+/// Opens the share sheet for one picture of an item.
+export async function sharePicture(item: Item, index: number): Promise<void> {
+  const uri = imageUris(item)[index];
+  if (!uri) throw new Error("아직 받는 중이에요");
+  await Sharing.shareAsync(uri, { mimeType: item.kind === "image" ? "image/png" : mimeOf(item.files?.[index]?.name ?? "") });
+}
+
+function mimeOf(name: string): string {
+  const ext = name.split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "png") return "image/png";
+  if (ext === "jpg" || ext === "jpeg") return "image/jpeg";
+  if (ext === "heic" || ext === "heif") return "image/heic";
+  if (ext === "webp") return "image/webp";
+  if (ext === "gif") return "image/gif";
+  return "image/jpeg";
 }

@@ -3,6 +3,7 @@ import * as Haptics from "expo-haptics";
 import React, { useCallback, useState } from "react";
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { useItemActions } from "@/actions";
 import { useApp, useItem } from "@/app-context";
 import { copyItem, shareFile, shareImage } from "@/clipboard";
 import { Button } from "@/ui/Button";
@@ -20,6 +21,7 @@ export default function Detail() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
+  const { act } = useItemActions();
 
   const copy = useCallback(async () => {
     if (!engine || !item) return;
@@ -81,12 +83,17 @@ export default function Detail() {
     <View style={[styles.screen, { backgroundColor: t.bg, paddingTop: insets.top }]}>
       <Header onBack={() => router.back()} color={t.origin} />
       <ScrollView contentContainerStyle={styles.content}>
-        <ItemCard item={item} full />
+        <ItemCard
+          item={item}
+          full
+          onOpenPicture={(i) => router.push(`/view/${item.id}?index=${i}`)}
+          onAction={() => void act(item)}
+        />
         <View style={[styles.meta, { backgroundColor: t.card }]}>
           <Row label="복사한 기기" value={item.from + (mine ? " (이 기기)" : "")} valueColor={t.origin} t={t} />
           <Row label="앱" value={item.app ?? "알 수 없음"} t={t} />
           <Row label="복사한 시각" value={fullTime(item.copied_at)} t={t} />
-          <Row label="종류" value={kindLabel(item.kind)} t={t} last />
+          <Row label="종류" value={kindLabel(item.kind, item.files)} t={t} last />
         </View>
         {item.kind === "files" && item.files && item.files.length > 1 ? (
           <View style={[styles.meta, { backgroundColor: t.card }]}>

@@ -37,6 +37,7 @@ export default function RootLayout() {
                   }}
                 />
                 <Stack.Screen name="upload" options={{ presentation: "modal" }} />
+                <Stack.Screen name="view/[id]" options={{ presentation: "fullScreenModal", animation: "fade", contentStyle: { backgroundColor: "#000" } }} />
               </Stack>
             </ToastProvider>
           </AppProvider>
