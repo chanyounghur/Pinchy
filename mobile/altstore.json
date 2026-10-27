@@ -18,6 +18,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.2.0",
+          "buildVersion": "10200",
+          "date": "2026-10-27T18:00:22Z",
+          "localizedDescription": "Pinchy 1.2.0. 변경 내용: https://github.com/chanyounghur/Pinchy/releases/tag/mobile-v1.2.0",
+          "downloadURL": "https://github.com/chanyounghur/Pinchy/releases/download/mobile-v1.2.0/Pinchy-1.2.0.ipa",
+          "size": 15482336,
+          "minOSVersion": "16.4"
+        },
+        {
           "version": "1.1.0",
           "buildVersion": "10100",
           "date": "2026-10-27T17:11:32Z",
@@ -78,7 +87,8 @@
         ],
         "privacy": {
           "NSCameraUsageDescription": "데스크톱 Pinchy의 QR을 찍어 연결할 때만 카메라를 써요.",
-          "NSPhotoLibraryUsageDescription": "앨범에서 고른 사진을 히스토리에 올릴 때만 사진을 써요."
+          "NSPhotoLibraryUsageDescription": "앨범에서 고른 사진을 히스토리에 올릴 때만 사진을 써요.",
+          "NSPhotoLibraryAddUsageDescription": "히스토리의 사진을 앨범에 저장할 때만 써요."
         }
       }
     }
