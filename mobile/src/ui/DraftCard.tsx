@@ -44,8 +44,11 @@ export function DraftCard({
       ]}
     >
       <View style={[styles.head, { backgroundColor: t.accentStrong }]}>
-        <Text style={styles.kind}>{kind}</Text>
-        <Text style={styles.time}>지금</Text>
+        <Text style={styles.kind} numberOfLines={1}>
+          {kind}
+          <Text style={styles.dot}> · </Text>
+          <Text style={styles.from}>{from}</Text>
+        </Text>
       </View>
       {draft.kind === "image" && pngUri ? (
         <Image source={{ uri: pngUri }} style={[styles.image, { backgroundColor: t.chip }]} contentFit="contain" accessibilityLabel="올릴 이미지" />
@@ -69,9 +72,8 @@ export function DraftCard({
         </View>
       )}
       <View style={styles.foot}>
-        <Text style={{ color: t.origin, fontWeight: "600", fontSize: 13, flex: 1 }} numberOfLines={1}>
-          {from}
-        </Text>
+        <View style={{ flex: 1 }} />
+        <Text style={{ color: t.cardMuted, fontSize: 12 }}>지금</Text>
         <Text style={[styles.badge, { backgroundColor: t.chip, color: t.cardMuted }]}>{badge}</Text>
       </View>
       {pressable ? (
@@ -85,11 +87,12 @@ export function DraftCard({
 
 const styles = StyleSheet.create({
   card: { borderRadius: radius.card, overflow: "hidden" },
-  head: { height: 44, paddingTop: 7, paddingHorizontal: 14 },
-  kind: { color: "#fff", fontSize: 15, fontWeight: "600", lineHeight: 18 },
-  time: { color: "rgba(255,255,255,0.9)", fontSize: 12, lineHeight: 15 },
+  head: { height: 32, paddingHorizontal: 14, flexDirection: "row", alignItems: "center" },
+  kind: { flex: 1, color: "#fff", fontSize: 14, fontWeight: "700", lineHeight: 18 },
+  dot: { color: "rgba(255,255,255,0.7)", fontWeight: "400" },
+  from: { color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: "600" },
   image: { marginHorizontal: 14, marginTop: 12, height: 220, borderRadius: 10 },
-  foot: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
+  foot: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
   badge: { height: 22, lineHeight: 22, paddingHorizontal: 7, borderRadius: radius.chip, fontSize: 13, fontWeight: "600" },
   band: { height: 48, marginHorizontal: 14, marginBottom: 14, borderRadius: 24, alignItems: "center", justifyContent: "center" },
   bandText: { color: "#fff", fontSize: 15, fontWeight: "700" },

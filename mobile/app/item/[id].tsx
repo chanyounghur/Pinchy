@@ -21,7 +21,7 @@ export default function Detail() {
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const [busy, setBusy] = useState(false);
-  const { act } = useItemActions();
+  const actions = useItemActions();
 
   const copy = useCallback(async () => {
     if (!engine || !item) return;
@@ -87,7 +87,7 @@ export default function Detail() {
           item={item}
           full
           onOpenPicture={(i) => router.push(`/view/${item.id}?index=${i}`)}
-          onAction={() => void act(item)}
+          actions={{ onSave: () => void actions.save(item), onCopy: () => void actions.copy(item), onShare: () => void actions.share(item) }}
         />
         <View style={[styles.meta, { backgroundColor: t.card }]}>
           <Row label="복사한 기기" value={item.from + (mine ? " (이 기기)" : "")} valueColor={t.origin} t={t} />

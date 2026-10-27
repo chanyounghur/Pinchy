@@ -1,8 +1,9 @@
 // One history item as the desktop draws it: the source app's color on top
 // with the kind and time, the content, and where it came from at the bottom.
-// Pictures open the viewer on tap; image and file cards carry one action
-// button (copy, save or share) at the bottom left.
+// The header names the kind and the device; the bottom row holds save, copy
+// and share buttons, then the time and a badge. Pictures open the viewer.
 
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
 import React, { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
@@ -14,12 +15,10 @@ import { radius, useTheme, type Theme } from "./theme";
 
 const GRID_MAX = 6;
 
-/// What the bottom-left button does for this item, if it has one.
-export function cardAction(item: Item): "copy" | "save" | "share" | null {
-  if (item.kind === "image") return "copy";
-  if (isPhotoBundle(item.kind, item.files)) return "save";
-  if (item.kind === "files") return "share";
-  return null;
+export interface CardActions {
+  onSave?: () => void;
+  onCopy?: () => void;
+  onShare?: () => void;
 }
 
 export function ItemCard({
@@ -27,7 +26,7 @@ export function ItemCard({
   onPress,
   onLongPress,
   onOpenPicture,
-  onAction,
+  actions,
   full = false,
 }: {
   item: Item;
@@ -35,7 +34,7 @@ export function ItemCard({
   onLongPress?: () => void;
   /// Opens the viewer at that picture. Picture cards use it for the card tap too.
   onOpenPicture?: (index: number) => void;
-  onAction?: () => void;
+  actions?: CardActions;
   full?: boolean;
 }) {
   const t = useTheme();
@@ -47,7 +46,7 @@ export function ItemCard({
   const color = item.color ?? appColor(item.app);
   const photos = isPhotoBundle(item.kind, item.files);
   const pictures = item.kind === "image" || photos;
-  const action = cardAction(item);
+  const copyable = item.kind !== "files" || photos;
   const press = pictures && onOpenPicture ? () => onOpenPicture(0) : onPress;
   return (
     <Pressable
@@ -58,8 +57,11 @@ export function ItemCard({
       style={({ pressed }) => [styles.card, { backgroundColor: t.card, opacity: pressed ? 0.85 : 1 }]}
     >
       <View style={[styles.head, { backgroundColor: color }]}>
-        <Text style={styles.kind}>{kindLabel(item.kind, item.files)}</Text>
-        <Text style={styles.time}>{relativeTime(item.copied_at)}</Text>
+        <Text style={styles.kind} numberOfLines={1}>
+          {kindLabel(item.kind, item.files)}
+          <Text style={styles.dot}> · </Text>
+          <Text style={styles.from}>{item.from}</Text>
+        </Text>
         {item.app ? (
           <View style={[styles.iconRing, { backgroundColor: t.card }]}>
             {item.icon ? (
@@ -74,28 +76,34 @@ export function ItemCard({
       </View>
       <Body item={item} t={t} full={full} photos={photos} onOpenPicture={onOpenPicture} />
       <View style={styles.foot}>
-        {action && onAction ? (
-          <Pressable
-            onPress={onAction}
-            accessibilityRole="button"
-            accessibilityLabel={actionLabel(action)}
-            hitSlop={6}
-            style={({ pressed }) => [styles.action, { backgroundColor: t.dark ? "rgba(255,102,82,0.2)" : "rgba(216,67,43,0.12)", opacity: pressed ? 0.6 : 1 }]}
-          >
-            <Text style={[styles.actionText, { color: t.origin }]}>{actionLabel(action)}</Text>
-          </Pressable>
+        {actions ? (
+          <>
+            <IconButton name="download-outline" label="저장" onPress={actions.onSave} t={t} />
+            <IconButton name="copy-outline" label="복사" onPress={actions.onCopy} disabled={!copyable} t={t} />
+            <IconButton name="share-outline" label="공유" onPress={actions.onShare} t={t} />
+          </>
         ) : null}
-        <Text style={[styles.origin, { color: t.origin }]} numberOfLines={1}>
-          {item.from}
-        </Text>
+        <View style={{ flex: 1 }} />
+        <Text style={[styles.time, { color: t.cardMuted }]}>{relativeTime(item.copied_at)}</Text>
         <Text style={[styles.badge, { backgroundColor: t.chip, color: t.cardMuted }]}>{badge(item, photos)}</Text>
       </View>
     </Pressable>
   );
 }
 
-function actionLabel(action: "copy" | "save" | "share"): string {
-  return action === "copy" ? "⧉ 복사" : action === "save" ? "↓ 저장" : "↗ 공유";
+function IconButton({ name, label, onPress, disabled = false, t }: { name: React.ComponentProps<typeof Ionicons>["name"]; label: string; onPress?: () => void; disabled?: boolean; t: Theme }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled || !onPress}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={4}
+      style={({ pressed }) => [styles.iconButton, { backgroundColor: t.chip, opacity: disabled ? 0.35 : pressed ? 0.6 : 1 }]}
+    >
+      <Ionicons name={name} size={17} color={t.origin} />
+    </Pressable>
+  );
 }
 
 function Body({ item, t, full, photos, onOpenPicture }: { item: Item; t: Theme; full: boolean; photos: boolean; onOpenPicture?: (index: number) => void }) {
@@ -231,7 +239,9 @@ const styles = StyleSheet.create({
   },
   head: { height: 32, paddingHorizontal: 14, flexDirection: "row", alignItems: "center", gap: 8 },
   kind: { flex: 1, color: "#fff", fontSize: 14, fontWeight: "700", lineHeight: 18 },
-  time: { color: "rgba(255,255,255,0.85)", fontSize: 12, lineHeight: 15 },
+  dot: { color: "rgba(255,255,255,0.7)", fontWeight: "400" },
+  from: { color: "rgba(255,255,255,0.92)", fontSize: 13, fontWeight: "600" },
+  time: { fontSize: 12 },
   iconRing: { width: 24, height: 24, borderRadius: 12, alignItems: "center", justifyContent: "center", marginRight: -6 },
   icon: { width: 18, height: 18, borderRadius: 5, alignItems: "center", justifyContent: "center" },
   iconText: { color: "#fff", fontSize: 10, fontWeight: "800" },
@@ -249,9 +259,7 @@ const styles = StyleSheet.create({
   fileRow: { flexDirection: "row", alignItems: "center", gap: 12 },
   fileIcon: { width: 40, height: 40, borderRadius: 10, alignItems: "center", justifyContent: "center" },
   fileName: { fontSize: 14, fontWeight: "600" },
-  foot: { flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingTop: 10, paddingBottom: 10 },
-  action: { height: 30, paddingHorizontal: 12, borderRadius: 15, alignItems: "center", justifyContent: "center" },
-  actionText: { fontSize: 13, fontWeight: "700" },
-  origin: { flex: 1, fontSize: 13, fontWeight: "600" },
+  foot: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, paddingTop: 8, paddingBottom: 10 },
+  iconButton: { width: 34, height: 34, borderRadius: 17, alignItems: "center", justifyContent: "center" },
   badge: { height: 22, lineHeight: 22, paddingHorizontal: 7, borderRadius: radius.chip, fontSize: 13, fontWeight: "600" },
 });

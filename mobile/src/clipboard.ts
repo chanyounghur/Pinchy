@@ -2,15 +2,17 @@
 // turning what other apps hand us into upload drafts.
 
 import * as Clipboard from "expo-clipboard";
-import { File } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import { ImageManipulator, SaveFormat } from "expo-image-manipulator";
 import * as MediaLibrary from "expo-media-library";
 import * as Sharing from "expo-sharing";
 import type { ShareIntent } from "expo-share-intent";
+import { Platform, Share } from "react-native";
 import { decodeBase64, encodeBase64 } from "./protocol/base64";
 import type { Item } from "./store/db";
 import type { SyncEngine } from "./sync";
 import { fileFor, imageFile } from "./blobs";
+import { isPhotoBundle } from "./ui/format";
 import { isLink, type Draft } from "./upload";
 
 /// Puts an item on the phone's clipboard. Files cannot go on a clipboard, so
@@ -147,4 +149,56 @@ function mimeOf(name: string): string {
   if (ext === "webp") return "image/webp";
   if (ext === "gif") return "image/gif";
   return "image/jpeg";
+}
+
+/// Saves an item outside the app: pictures to the album, anything else to
+/// a folder the user picks (Android) or through the share sheet, where
+/// "파일에 저장" lives (iOS). Text and links go as a .txt file. Returns a
+/// note for the toast, or null when the share sheet said it for us.
+export async function saveItem(item: Item): Promise<string | null> {
+  if (item.kind === "image" || isPhotoBundle(item.kind, item.files)) {
+    const n = await savePictures(item);
+    return n > 1 ? `사진 ${n}장을 앨범에 저장했어요` : "앨범에 저장했어요";
+  }
+  const files = item.kind === "files" && item.files ? item.files.map((_, i) => fileFor(item.id, item.files!, i)) : [textFile(item)];
+  if (Platform.OS === "android") {
+    const dir = await Directory.pickDirectoryAsync();
+    for (const f of files) f.copy(dir);
+    return files.length > 1 ? `파일 ${files.length}개를 저장했어요` : "저장했어요";
+  }
+  for (const f of files) await Sharing.shareAsync(f.uri, { dialogTitle: f.name });
+  return null;
+}
+
+/// Hands an item to the share sheet: text as text, pictures and files one
+/// file at a time.
+export async function shareItem(item: Item): Promise<void> {
+  if (item.kind === "text" || item.kind === "link") {
+    await Share.share(Platform.OS === "ios" ? { message: item.text ?? "" } : { message: item.text ?? "", title: "Pinchy" });
+    return;
+  }
+  if (item.kind === "image") return shareImage(item);
+  for (let i = 0; i < (item.files?.length ?? 0); i++) await shareFile(item, i);
+}
+
+/// Puts an item on the clipboard: text, the image, or the first photo of a
+/// bundle. Other files cannot go on a clipboard.
+export async function copyAny(item: Item): Promise<void> {
+  if (item.kind === "text" || item.kind === "link") {
+    await Clipboard.setStringAsync(item.text ?? "");
+  } else if (item.kind === "image" || isPhotoBundle(item.kind, item.files)) {
+    await copyPicture(item, 0);
+  } else {
+    throw new Error("파일은 복사할 수 없어요. 저장이나 공유를 써 주세요.");
+  }
+}
+
+/// Text or a link as a .txt file in the cache, named after its first words.
+function textFile(item: Item): File {
+  const text = item.text ?? "";
+  const head = text.trim().split(/\s+/).slice(0, 4).join(" ").replace(/[\\/:*?"<>|]/g, "").slice(0, 40) || "pinchy";
+  const file = new File(Paths.cache, `${head}.txt`);
+  if (file.exists) file.delete();
+  file.write(text);
+  return file;
 }

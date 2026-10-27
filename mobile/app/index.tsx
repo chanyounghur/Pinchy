@@ -31,7 +31,7 @@ export default function History() {
     if (updateReady) toast("새 버전을 받았어요. 다시 열면 적용돼요");
   }, [updateReady, toast]);
 
-  const { copy, act } = useItemActions();
+  const actions = useItemActions();
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -99,10 +99,10 @@ export default function History() {
         renderItem={({ item }) => (
           <ItemCard
             item={item}
-            onPress={() => void copy(item)}
+            onPress={() => (item.kind === "files" ? router.push(`/item/${item.id}`) : void actions.copy(item))}
             onLongPress={() => router.push(`/item/${item.id}`)}
             onOpenPicture={(i) => router.push(`/view/${item.id}?index=${i}`)}
-            onAction={() => void act(item)}
+            actions={{ onSave: () => void actions.save(item), onCopy: () => void actions.copy(item), onShare: () => void actions.share(item) }}
           />
         )}
         contentContainerStyle={[styles.list, { paddingBottom: insets.bottom + 120 }]}

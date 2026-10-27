@@ -1,6 +1,7 @@
 // Pictures full screen: pinch to zoom, swipe between the photos of a
 // bundle, drag down to close. Save, share and copy at the bottom.
 
+import Ionicons from "@expo/vector-icons/Ionicons";
 import { Image } from "expo-image";
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
@@ -119,25 +120,32 @@ export default function Viewer() {
           </View>
         ) : null}
         <View style={styles.actions}>
-          <Action title="↓ 저장" onPress={() => void run("save")} busy={busy === "save"} disabled={!ready || busy !== null} />
-          <Action title="↗ 공유" onPress={() => void run("share")} busy={busy === "share"} disabled={!ready || busy !== null} />
-          <Action title="⧉ 복사" onPress={() => void run("copy")} busy={busy === "copy"} disabled={!ready || busy !== null} primary />
+          <Action icon="download-outline" title="저장" onPress={() => void run("save")} busy={busy === "save"} disabled={!ready || busy !== null} />
+          <Action icon="copy-outline" title="복사" onPress={() => void run("copy")} busy={busy === "copy"} disabled={!ready || busy !== null} />
+          <Action icon="share-outline" title="공유" onPress={() => void run("share")} busy={busy === "share"} disabled={!ready || busy !== null} />
         </View>
       </View>
     </GestureHandlerRootView>
   );
 }
 
-function Action({ title, onPress, busy, disabled, primary = false }: { title: string; onPress: () => void; busy: boolean; disabled: boolean; primary?: boolean }) {
+function Action({ icon, title, onPress, busy, disabled }: { icon: React.ComponentProps<typeof Ionicons>["name"]; title: string; onPress: () => void; busy: boolean; disabled: boolean }) {
   return (
     <Pressable
       onPress={onPress}
       disabled={disabled}
       accessibilityRole="button"
       accessibilityLabel={title}
-      style={({ pressed }) => [styles.button, { backgroundColor: primary ? "#d8432b" : "rgba(255,255,255,0.16)", opacity: pressed ? 0.7 : disabled && !busy ? 0.5 : 1 }]}
+      style={({ pressed }) => [styles.button, { opacity: pressed ? 0.7 : disabled && !busy ? 0.5 : 1 }]}
     >
-      {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.buttonText}>{title}</Text>}
+      {busy ? (
+        <ActivityIndicator color="#fff" />
+      ) : (
+        <>
+          <Ionicons name={icon} size={18} color="#fff" />
+          <Text style={styles.buttonText}>{title}</Text>
+        </>
+      )}
     </Pressable>
   );
 }
@@ -269,6 +277,6 @@ const styles = StyleSheet.create({
   dots: { flexDirection: "row", gap: 6 },
   dot: { width: 6, height: 6, borderRadius: 3, backgroundColor: "#fff" },
   actions: { flexDirection: "row", gap: 10, alignSelf: "stretch" },
-  button: { flex: 1, height: 44, borderRadius: 22, alignItems: "center", justifyContent: "center" },
+  button: { flex: 1, height: 44, borderRadius: 22, flexDirection: "row", gap: 6, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.16)" },
   buttonText: { color: "#fff", fontSize: 15, fontWeight: "700" },
 });
