@@ -87,7 +87,7 @@
         }
       ]
     ],
-    "runtimeVersion": "3",
+    "runtimeVersion": "4",
     "updates": {
       "url": "https://pinchy.invalid/updates/manifest",
       "enabled": true,

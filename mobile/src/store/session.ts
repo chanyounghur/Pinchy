@@ -2,6 +2,7 @@
 // sharing key. All of it lives in the OS secure store (Keychain / Keystore),
 // never in the SQLite history.
 
+import * as Device from "expo-device";
 import * as SecureStore from "expo-secure-store";
 import { Platform } from "react-native";
 
@@ -39,6 +40,13 @@ export async function clearSession(): Promise<void> {
   await SecureStore.deleteItemAsync(KEY);
 }
 
+// What the OS calls this phone: the name its owner gave it on Android, the
+// model on iOS, where apps only see a generic "iPhone" without an Apple
+// entitlement a sideloaded build cannot get.
 export function defaultDeviceName(): string {
-  return Platform.OS === "ios" ? "내 iPhone" : "내 Android";
+  const generic = ["iPhone", "iPad", "iPod touch"];
+  const name = [Device.deviceName, Device.modelName]
+    .map((n) => n?.trim())
+    .find((n) => n && !generic.includes(n));
+  return name?.slice(0, 40) || (Platform.OS === "ios" ? "내 iPhone" : "내 Android");
 }
