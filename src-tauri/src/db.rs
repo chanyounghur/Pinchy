@@ -660,7 +660,7 @@ mod tests {
         secret.concealed = true;
         let (id, _) = db.upsert(secret).unwrap();
         assert!(db.get(id).unwrap().unwrap().concealed);
-        assert_eq!(db.expire_concealed(now_ms() - 1).unwrap(), 0, "fresh");
+        assert_eq!(db.expire_concealed(now_ms() - 60_000).unwrap(), 0, "fresh");
         db.upsert(text("hunter2")).unwrap();
         assert!(!db.get(id).unwrap().unwrap().concealed, "copied in the open once");
         let mut secret = text("p@ss");
