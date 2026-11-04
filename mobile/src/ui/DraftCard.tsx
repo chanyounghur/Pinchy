@@ -25,7 +25,8 @@ export function DraftCard({
 }) {
   const t = useTheme();
   const png = draft.png;
-  const pngUri = useMemo(() => (png ? `data:image/png;base64,${encodeBase64(png)}` : null), [png]);
+  const preview = draft.preview;
+  const pngUri = useMemo(() => preview ?? (png ? `data:image/png;base64,${encodeBase64(png)}` : null), [preview, png]);
   const photos = isPhotoBundle(draft.kind, draft.files);
   const kind = draft.kind === "image" ? "이미지" : photos ? "사진" : draft.kind === "files" ? "파일" : draft.kind === "link" ? "링크" : "텍스트";
   const badge = draft.kind === "image" && png ? bytes(png.length) : photos ? `사진 ${draft.files?.length ?? 0}장` : draft.kind === "files" ? `파일 ${draft.files?.length ?? 0}개` : `${[...(draft.text ?? "")].length}자`;

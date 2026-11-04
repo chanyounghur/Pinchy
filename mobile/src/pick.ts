@@ -20,7 +20,7 @@ export async function pickPhotos(): Promise<Draft | null> {
   if (result.canceled || result.assets.length === 0) return null;
   if (result.assets.length === 1) {
     const a = result.assets[0]!;
-    return { kind: "image", png: await toPng(a.uri, a.mimeType ?? "image/jpeg") };
+    return { kind: "image", png: await toPng(a.uri, a.mimeType ?? "image/jpeg"), preview: a.uri };
   }
   const files: { name: string; bytes: Uint8Array }[] = [];
   for (const a of result.assets) {

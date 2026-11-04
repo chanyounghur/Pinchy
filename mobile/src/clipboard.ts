@@ -53,7 +53,7 @@ export async function draftFromClipboard(): Promise<Draft | null> {
   if (await Clipboard.hasImageAsync()) {
     const image = await Clipboard.getImageAsync({ format: "png" });
     const png = image && dataUriBytes(image.data);
-    if (png) return { kind: "image", png };
+    if (png) return { kind: "image", png, preview: image.data };
   }
   if (await Clipboard.hasStringAsync()) {
     const text = await Clipboard.getStringAsync();
@@ -67,7 +67,7 @@ export async function draftFromShare(intent: ShareIntent): Promise<Draft | null>
   const files = intent.files ?? [];
   if (files.length === 1 && files[0]!.mimeType.startsWith("image/")) {
     const f = files[0]!;
-    return { kind: "image", png: await toPng(f.path, f.mimeType), app: appOf(intent) };
+    return { kind: "image", png: await toPng(f.path, f.mimeType), preview: new File(f.path).uri, app: appOf(intent) };
   }
   if (files.length > 0) {
     const out: { name: string; bytes: Uint8Array }[] = [];

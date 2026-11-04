@@ -13,6 +13,8 @@ export interface Draft {
   text?: string;
   /// PNG bytes for images.
   png?: Uint8Array;
+  /// A URI the image can be shown from without re-encoding `png` in JS.
+  preview?: string;
   files?: { name: string; bytes: Uint8Array }[];
   /// App the content came from, when known.
   app?: string;

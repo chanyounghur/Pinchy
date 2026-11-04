@@ -1,7 +1,7 @@
 // The add sheet: pick photos or files to upload, or send what is on the
 // clipboard with one tap on its preview.
 
-import { useRouter } from "expo-router";
+import { useNavigation, useRouter, type NativeStackNavigationProp } from "expo-router";
 import * as Haptics from "expo-haptics";
 import React, { useEffect, useMemo, useState } from "react";
 import { ActivityIndicator, Platform, Pressable, StyleSheet, Text, View } from "react-native";
@@ -20,25 +20,40 @@ export default function Add() {
   const { session, engine, policy } = useApp();
   const t = useTheme();
   const router = useRouter();
+  const navigation = useNavigation<NativeStackNavigationProp<Record<string, object | undefined>>>();
   const toast = useToast();
   const insets = useSafeAreaInsets();
   const [clip, setClip] = useState<Draft | null | undefined>(undefined);
   const [busy, setBusy] = useState<Busy>(null);
   const maxMb = policy?.max_blob_mb ?? 128;
 
+  // Reading the clipboard can take a while (iOS fetches an image from the app
+  // that copied it, then it is decoded here), so wait until the sheet is up
+  // instead of holding the JS thread while it opens.
   useEffect(() => {
     let cancelled = false;
-    draftFromClipboard()
-      .then((d) => {
-        if (!cancelled) setClip(d);
-      })
-      .catch(() => {
-        if (!cancelled) setClip(null);
-      });
+    let started = false;
+    const read = () => {
+      if (started || cancelled) return;
+      started = true;
+      draftFromClipboard()
+        .then((d) => {
+          if (!cancelled) setClip(d);
+        })
+        .catch(() => {
+          if (!cancelled) setClip(null);
+        });
+    };
+    const off = navigation.addListener("transitionEnd", (e) => {
+      if (!e.data.closing) read();
+    });
+    const fallback = setTimeout(read, 600);
     return () => {
       cancelled = true;
+      off();
+      clearTimeout(fallback);
     };
-  }, []);
+  }, [navigation]);
 
   const limit = useMemo(() => (clip ? tooLarge(clip, maxMb) : null), [clip, maxMb]);
 
