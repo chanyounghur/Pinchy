@@ -64,8 +64,13 @@ const KEYCHAIN_ACCOUNT: &str = "relay";
 const INVITER: &[u8] = b"pinchy-inviter";
 const JOINER: &[u8] = b"pinchy-joiner";
 const KEY_MISMATCH: &str =
-    "다른 공유 키로 만든 항목이 있어 열 수 없어요. 서버를 초기화했다면 모든 기기를 다시 연결해 주세요.";
+    "다른 공유 키로 만든 항목이 있어 열 수 없어요. 서버를 초기화했다면 모든 기기를 다시 연결해주세요.";
 const UNKNOWN_DEVICE: &str = "다른 기기";
+/// Errors for one item that must not block the upload queue; matched by
+/// value, so the wording can change freely.
+const FILE_MISSING: &str = "파일을 찾을 수 없어요.";
+const IMAGE_MISSING: &str = "이미지 파일을 찾을 수 없어요.";
+const ITEM_CONFLICT: &str = "서버에 같은 항목이 다른 내용으로 있어서 올리지 못했어요.";
 const SINCE_KEY: &str = "since";
 /// Set once the first sync after connecting has brought the history down
 /// and queued this device's own items.
@@ -223,10 +228,10 @@ fn load_secrets(state: &ShareState) -> Result<Secrets, String> {
     }
     let stored = match keychain()?.get_password() {
         Ok(stored) => stored,
-        Err(keyring::Error::NoEntry) => return Err("저장된 연결 정보가 없어요. 연결을 해제하고 다시 연결해 주세요.".into()),
+        Err(keyring::Error::NoEntry) => return Err("저장된 연결 정보가 없어요. 연결을 해제하고 다시 연결해주세요.".into()),
         Err(e) => return Err(format!("키체인에서 연결 정보를 읽지 못했어요. ({e})")),
     };
-    let secrets: Secrets = serde_json::from_str(&stored).map_err(|_| "키체인의 연결 정보가 손상됐어요.")?;
+    let secrets: Secrets = serde_json::from_str(&stored).map_err(|_| "키체인의 연결 정보를 읽을 수 없어요. 연결을 해제하고 다시 연결해주세요.")?;
     *cached = Some(secrets.clone());
     Ok(secrets)
 }
@@ -339,9 +344,9 @@ fn file_list(content: &str) -> Result<Vec<(PathBuf, FileMeta)>, String> {
     for path in paths {
         let path = PathBuf::from(path);
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-        let meta = std::fs::metadata(&path).map_err(|_| format!("파일을 찾을 수 없어요. ({name})"))?;
+        let meta = std::fs::metadata(&path).map_err(|_| format!("{FILE_MISSING} ({name})"))?;
         if !meta.is_file() {
-            return Err(format!("폴더는 보낼 수 없어요. 파일만 보낼 수 있어요. ({name})"));
+            return Err(format!("폴더는 보낼 수 없어요. 폴더 안의 파일을 골라주세요. ({name})"));
         }
         total += meta.len();
         files.push((path, FileMeta { name, size: meta.len() }));
@@ -574,17 +579,17 @@ impl Http {
         };
         let response = request
             .send()
-            .map_err(|e| HttpError { status: None, message: format!("서버에 연결할 수 없어요. ({e})") })?;
+            .map_err(|e| HttpError { status: None, message: format!("서버에 연결할 수 없어요. 인터넷과 서버 주소를 확인해주세요. ({e})") })?;
         let status = response.status();
         if status.is_success() {
             return Ok(response);
         }
         let code = status.as_u16();
         let message = match code {
-            401 => "이 기기의 연결이 해제됐어요. 연결을 해제한 뒤 새 코드로 다시 연결해 주세요.".into(),
+            401 => "이 기기의 연결이 끊겼어요. 이 기기 연결 해제를 누른 뒤 새 코드로 다시 연결해주세요.".into(),
             413 => "너무 커서 올릴 수 없어요.".into(),
-            429 => "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해 주세요.".into(),
-            code => format!("서버 오류예요. (HTTP {code})"),
+            429 => "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해주세요.".into(),
+            code => format!("서버에 잠깐 문제가 생겼어요. 잠시 후 다시 시도해주세요. (HTTP {code})"),
         };
         Err(HttpError { status: Some(code), message })
     }
@@ -629,7 +634,7 @@ fn join_first(server: &str, name: &str, code: &str) -> Result<(String, Secrets),
     let response = http
         .send(http.post("/v1/first", serde_json::json!({ "code": code, "label": label })))
         .map_err(|e| match e.status {
-            Some(403) => "첫 연결 코드가 맞지 않거나 만료됐어요. 서버 로그의 최신 코드를 확인해 주세요.".into(),
+            Some(403) => "첫 연결 코드가 맞지 않거나 시간이 지났어요. 서버 로그의 최신 코드를 확인해주세요.".into(),
             _ => e.message,
         })?;
     let joined: Joined = Http::json(response)?;
@@ -640,15 +645,15 @@ fn join_first(server: &str, name: &str, code: &str) -> Result<(String, Secrets),
 fn join_invited(server: &str, name: &str, nameplate: &str, password: &str) -> Result<(String, Secrets), String> {
     let http = Http::new(server, None)?;
     let gone = |e: HttpError| match e.status {
-        Some(404) => "코드가 맞지 않거나 만료됐어요. 연결된 기기에서 새 코드를 만들어 주세요.".to_string(),
-        Some(409) => "이미 사용된 코드예요. 연결된 기기에서 새 코드를 만들어 주세요.".to_string(),
+        Some(404) => "코드가 맞지 않거나 시간이 지났어요. 연결된 기기에서 새 코드를 만들어주세요.".to_string(),
+        Some(409) => "이미 쓴 코드예요. 연결된 기기에서 새 코드를 만들어주세요.".to_string(),
         _ => e.message,
     };
     let offer: PairingOffer =
         Http::json(http.send(http.post(&format!("/v1/pairings/{nameplate}/join"), serde_json::json!({}))).map_err(gone)?)?;
     let (spake, msg_b) =
         Spake2::<Ed25519Group>::start_b(&Password::new(password.as_bytes()), &Identity::new(INVITER), &Identity::new(JOINER));
-    let pake = spake.finish(&decode(&offer.msg)?).map_err(|_| "코드가 맞지 않거나 만료됐어요.")?;
+    let pake = spake.finish(&decode(&offer.msg)?).map_err(|_| "코드가 맞지 않거나 시간이 지났어요.")?;
     let pake = Key::from_bytes(&pake)?;
     http.send(http.post(
         &format!("/v1/pairings/{nameplate}/answer"),
@@ -673,11 +678,11 @@ fn join_invited(server: &str, name: &str, nameplate: &str, password: &str) -> Re
         let key = pake
             .open("pair-key", nameplate, &decode(&result.payload)?)
             .and_then(|k| String::from_utf8(k).ok())
-            .ok_or("공유 키를 받지 못했어요. 새 코드로 다시 시도해 주세요.")?;
+            .ok_or("공유 키를 받지 못했어요. 새 코드로 다시 시도해주세요.")?;
         Key::parse(&key)?;
         return Ok((result.device_id, Secrets { token: result.token, key }));
     }
-    Err("연결된 기기가 응답하지 않아요. 그 기기에서 코드 화면이 열려 있는지 확인해 주세요.".into())
+    Err("연결된 기기가 응답하지 않아요. 그 기기에서 코드 화면이 열려 있는지 확인해주세요.".into())
 }
 
 #[derive(Deserialize)]
@@ -747,7 +752,7 @@ impl Invitation {
             });
         let Some(pake) = verified else {
             self.cancel(relay);
-            return Err(failed("입력한 코드가 맞지 않아 연결을 취소했어요. 새 코드로 다시 시도해 주세요.".into()));
+            return Err(failed("입력한 코드가 맞지 않아 연결을 취소했어요. 새 코드로 다시 시도해주세요.".into()));
         };
         let name = decode(&answer.name)
             .ok()
@@ -943,7 +948,7 @@ impl Relay {
         let (meta, blob) = match item.kind.as_str() {
             "text" | "link" => (Meta { text: Some(item.content.clone()), ..base }, None),
             "image" => {
-                let bytes = std::fs::read(&item.content).map_err(|_| "이미지 파일을 찾을 수 없어요.")?;
+                let bytes = std::fs::read(&item.content).map_err(|_| IMAGE_MISSING)?;
                 (base, Some(bytes))
             }
             "files" => {
@@ -959,7 +964,7 @@ impl Relay {
             Ok(response) => response,
             Err(HttpError { status: Some(410), .. }) => return Ok(false),
             Err(HttpError { status: Some(409), .. }) => {
-                return Err("서버의 항목과 모양이 달라 올리지 못했어요.".into())
+                return Err(ITEM_CONFLICT.into())
             }
             Err(e) => return Err(e.message),
         };
@@ -1122,7 +1127,7 @@ fn session(app: &AppHandle) -> Result<Option<Relay>, String> {
 }
 
 fn connected(app: &AppHandle) -> Result<Relay, String> {
-    session(app)?.ok_or_else(|| "기기 간 동기화를 먼저 연결해 주세요.".into())
+    session(app)?.ok_or_else(|| "기기 간 동기화를 먼저 연결해주세요.".into())
 }
 
 /// Drops this device's connection locally. The history stays as it is.
@@ -1302,7 +1307,7 @@ pub async fn disconnect_share(app: AppHandle) -> Result<Option<String>, String> 
             Err(e) => Some(e),
         };
         forget(&app)?;
-        Ok(warning.map(|e| format!("이 기기의 연결 정보는 지웠지만 서버에 알리지 못했어요. 다른 기기에서 이 기기를 해제해 주세요. ({e})")))
+        Ok(warning.map(|e| format!("이 기기의 연결 정보는 지웠지만 서버에 알리지 못했어요. 다른 기기에서 이 기기를 해제해주세요. ({e})")))
     })
     .await
 }
@@ -1311,7 +1316,7 @@ pub async fn disconnect_share(app: AppHandle) -> Result<Option<String>, String> 
 #[tauri::command]
 pub async fn set_share_name(app: AppHandle, name: String) -> Result<String, String> {
     blocking(move || {
-        let name = clean_name(&name).ok_or("기기 이름을 입력해 주세요.")?;
+        let name = clean_name(&name).ok_or("기기 이름을 입력해주세요.")?;
         let relay = connected(&app)?;
         relay.rename(&name)?;
         app.state::<SettingsStore>().update(|s| {
@@ -1462,7 +1467,7 @@ fn push_one(relay: &Relay, db: &Db, entry: &Pending, policy: &Policy) -> Result<
             match relay.put(&item) {
                 Ok(_) => Ok(()),
                 // A local problem with this item must not block the queue.
-                Err(e) if e.contains("찾을 수 없어요") || e.contains("모양이 달라") => {
+                Err(e) if e.starts_with(FILE_MISSING) || e == IMAGE_MISSING || e == ITEM_CONFLICT => {
                     eprintln!("[pinchy] skipping item {}: {e}", entry.sync_id);
                     Ok(())
                 }

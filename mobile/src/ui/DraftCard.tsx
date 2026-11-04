@@ -79,7 +79,7 @@ export function DraftCard({
       </View>
       {pressable ? (
         <View style={[styles.band, { backgroundColor: t.accentStrong, opacity: disabled ? 0.5 : 1 }]}>
-          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.bandText}>↑ 이대로 업로드</Text>}
+          {busy ? <ActivityIndicator color="#fff" /> : <Text style={styles.bandText}>이대로 업로드</Text>}
         </View>
       ) : null}
     </Pressable>

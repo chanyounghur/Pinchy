@@ -41,8 +41,8 @@ export default function Settings() {
   }, [name, session, rename, toast]);
 
   const leave = useCallback(() => {
-    Alert.alert("연결 해제", "이 폰의 키와 받아 둔 히스토리를 지워요. 다른 기기의 히스토리는 그대로예요.", [
-      { text: "취소", style: "cancel" },
+    Alert.alert("연결을 해제할까요?", "이 휴대폰에 받아둔 히스토리와 연결 정보가 지워져요. 다른 기기의 히스토리는 그대로 남아요.", [
+      { text: "닫기", style: "cancel" },
       {
         text: "연결 해제",
         style: "destructive",
@@ -55,10 +55,10 @@ export default function Settings() {
 
   const clearAll = useCallback(() => {
     if (!engine) return;
-    Alert.alert("히스토리 비우기", "서버와 모든 기기의 히스토리를 비워요. 되돌릴 수 없어요.", [
-      { text: "취소", style: "cancel" },
+    Alert.alert("모든 기기의 히스토리를 비울까요?", "서버에서도 지워지고, 되돌릴 수 없어요.", [
+      { text: "닫기", style: "cancel" },
       {
-        text: "모두 삭제",
+        text: "비우기",
         style: "destructive",
         onPress: () => {
           engine
@@ -98,13 +98,13 @@ export default function Settings() {
       ? "동기화됨"
       : status.state === "syncing"
         ? status.initial
-          ? "처음 받는 중…"
+          ? "히스토리 받는 중…"
           : "동기화 중…"
         : status.state === "offline"
           ? `오프라인 · ${status.message}`
           : status.state === "unauthorized"
             ? "이 기기의 연결이 해제됐어요"
-            : "대기";
+            : "연결 준비 중";
 
   return (
     <View style={[styles.screen, { backgroundColor: t.bg, paddingTop: insets.top }]}>
@@ -134,7 +134,7 @@ export default function Settings() {
         <Section title="서버" t={t}>
           <Row label="주소" value={session.server.replace(/^https?:\/\//, "")} t={t} />
           <Row label="상태" value={statusText} dot={status.state === "live" ? t.ok : status.state === "offline" || status.state === "unauthorized" ? t.danger : t.muted} t={t} />
-          <Row label="받아 둔 항목" value={count === null ? "…" : `${count}개`} t={t} last />
+          <Row label="받아둔 항목" value={count === null ? "…" : `${count}개`} t={t} last />
         </Section>
 
         <Section title={devices ? `연결된 기기 ${devices.devices.length}대` : "연결된 기기"} t={t}>
@@ -176,7 +176,7 @@ export default function Settings() {
           <Row label="런타임" value={update.runtime ?? "—"} t={t} />
           {updateReady ? (
             <Pressable onPress={() => void applyUpdate()} style={[styles.row, { justifyContent: "center", borderTopWidth: 1, borderTopColor: t.separator }]} accessibilityRole="button">
-              <Text style={{ color: t.origin, fontSize: 15, fontWeight: "600" }}>받아 둔 새 버전 지금 적용</Text>
+              <Text style={{ color: t.origin, fontSize: 15, fontWeight: "600" }}>새 버전으로 다시 시작하기</Text>
             </Pressable>
           ) : (
             <Pressable onPress={() => void lookForUpdate()} disabled={checking || !updatesEnabled} style={[styles.row, { justifyContent: "center", borderTopWidth: 1, borderTopColor: t.separator }]} accessibilityRole="button">
@@ -194,11 +194,11 @@ export default function Settings() {
           </Pressable>
         </Section>
         <Text style={{ color: t.muted, fontSize: 12, lineHeight: 18, marginHorizontal: 14 }}>
-          연결을 해제하면 이 폰의 키와 받아 둔 히스토리를 지워요. 다른 기기의 히스토리는 그대로예요.
+          연결을 해제하면 이 휴대폰에 받아둔 히스토리와 연결 정보가 지워져요. 다른 기기의 히스토리는 그대로 남아요.
         </Text>
         {engine.locked > 0 ? (
           <Text style={{ color: t.muted, fontSize: 12, lineHeight: 18, marginHorizontal: 14 }}>
-            다른 키로 잠긴 항목 {engine.locked}개는 건너뛰었어요.
+            다른 키로 만든 항목 {engine.locked}개는 열 수 없어서 건너뛰었어요.
           </Text>
         ) : null}
       </ScrollView>

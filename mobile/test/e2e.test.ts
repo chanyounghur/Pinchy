@@ -107,7 +107,7 @@ test("a phone joins by QR, follows the desktop's history and adds to it", { skip
     const ahead = await phone.changes(after.next + 100, 0);
     if (ahead === "reset") throw new Error("unexpected reset");
     assert.equal(ahead.items.length, 0);
-    await assert.rejects(new Relay(server, "nope", fetch).me(), /연결이 해제/);
+    await assert.rejects(new Relay(server, "nope", fetch).me(), /연결이 끊겼어요/);
   } finally {
     relay.kill();
     rmSync(dir, { recursive: true, force: true });

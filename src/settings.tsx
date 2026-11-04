@@ -46,14 +46,14 @@ function Autostart() {
     <div className="startup-row">
       <label htmlFor="autostart">{IS_MAC ? "로그인 시 자동 실행" : "Windows 시작 시 자동 실행"}</label>
       <div className="startup-control">
-        <span className="hint" aria-live="polite">{busy ? "확인 중…" : enabled === null ? "확인 실패" : enabled ? "ON" : "OFF"}</span>
+        <span className="hint" aria-live="polite">{busy ? "확인 중…" : enabled === null ? "확인하지 못했어요" : enabled ? "켜짐" : "꺼짐"}</span>
         <input id="autostart" className="switch" type="checkbox" role="switch"
           checked={enabled ?? false} disabled={busy || enabled === null}
           onChange={() => void toggle()} aria-describedby="autostart-note" />
       </div>
     </div>
-    <p className="note" id="autostart-note">로그인하면 창을 띄우지 않고 {IS_MAC ? "메뉴 막대" : "트레이"}에서 실행합니다.</p>
-    {error && <p className="update-error" role="alert">자동 실행 설정을 확인하거나 변경하지 못했어요. 설정 창을 다시 열어 주세요.<br />{error}</p>}
+    <p className="note" id="autostart-note">로그인하면 창 없이 {IS_MAC ? "메뉴 막대" : "트레이"}에서 켜져요.</p>
+    {error && <p className="update-error" role="alert">자동 실행 설정을 확인하거나 바꾸지 못했어요. 설정 창을 닫았다가 다시 열어주세요.<br />{error}</p>}
   </section>;
 }
 
@@ -91,23 +91,23 @@ function Updates() {
   };
   const busy = !status || ["checking", "downloading", "installing"].includes(status.phase);
   const messages = {
-    idle: "자동으로 새 버전을 확인합니다.",
+    idle: "새 버전이 나오면 자동으로 받아요.",
     checking: "새 버전을 확인하고 있어요…",
     downloading: `${status?.version ?? "새 버전"} 다운로드 중…`,
     ready: `${status?.version ?? "새 버전"} 업데이트가 준비됐어요.`,
-    installing: "설치 후 앱을 다시 시작합니다…",
-    latest: "최신 버전입니다.",
-    error: "업데이트하지 못했어요. 잠시 후 다시 확인해 주세요.",
+    installing: "설치하고 다시 시작하고 있어요…",
+    latest: "최신 버전이에요.",
+    error: "업데이트하지 못했어요. 잠시 후 다시 확인해주세요.",
   };
   return <section className="updates">
     <h1>앱 업데이트 <small>{status?.current_version ? `v${status.current_version}` : ""}</small></h1>
     <p role="status">{status ? messages[status.phase] : "업데이트 상태 확인 중…"}</p>
     <div className="row">
       {status?.phase === "ready"
-        ? <button className="primary" onClick={() => void run("install_update")}>설치하고 재시작</button>
+        ? <button className="primary" onClick={() => void run("install_update")}>설치하고 다시 시작</button>
         : <button disabled={busy} onClick={() => void run("check_update")}>업데이트 확인</button>}
     </div>
-    <p className="note">실행 후 및 6시간마다 확인해 자동으로 다운로드합니다.<br />설치는 버튼을 눌렀을 때 진행됩니다.</p>
+    <p className="note">앱을 켤 때와 6시간마다 새 버전을 확인해서 미리 받아둬요.<br />설치는 버튼을 누를 때만 해요.</p>
     {(error || status?.error) && <details className="update-error"><summary>오류 자세히 보기</summary>{error || status?.error}</details>}
   </section>;
 }
@@ -190,7 +190,7 @@ function SettingsPage() {
         onKeyDown={onKeyDown}
       >
         {shown ? <span className="combo">{pretty(shown)}</span> : <span className="hint">…</span>}
-        <span className="hint">{capturing ? "원하는 조합을 누르세요" : "클릭한 뒤 키를 누르세요"}</span>
+        <span className="hint">{capturing ? "원하는 키 조합을 눌러주세요" : "여기를 선택하고 단축키를 눌러주세요"}</span>
       </div>
       <div className="row">
         <button className="primary" disabled={!draft || draft === saved} onClick={save}>
@@ -201,7 +201,7 @@ function SettingsPage() {
         </button>
         <span className={`msg ${message?.kind ?? ""}`}>{message?.text}</span>
       </div>
-      <p className="note">{IS_MAC ? "수정자 키(⌘ ⌃ ⌥ ⇧)" : "Ctrl, Alt, Shift, Win 중"} 하나 이상과 일반 키 하나를 조합하세요.</p>
+      <p className="note">{IS_MAC ? "⌘ ⌃ ⌥ ⇧" : "Ctrl, Alt, Shift, Win"} 중 하나 이상과 다른 키 하나를 함께 눌러주세요.</p>
       <Autostart />
       <StorageSettings />
       <ShareSettings />

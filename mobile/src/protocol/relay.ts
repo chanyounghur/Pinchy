@@ -95,7 +95,7 @@ export class Relay {
   /// the caller; the relay never sees device names.
   async join(code: string, sealedLabel: string): Promise<{ device_id: string; token: string }> {
     const response = await this.send("POST", "/v1/join", json({ code, label: sealedLabel }), {
-      403: "코드가 틀렸거나 만료됐어요. 데스크톱에서 QR을 다시 띄워 주세요.",
+      403: "코드가 틀렸거나 시간이 지났어요. 컴퓨터에서 QR을 다시 띄워주세요.",
     });
     return (await response.json()) as { device_id: string; token: string };
   }
@@ -149,7 +149,7 @@ export class Relay {
         "PUT",
         `/v1/items/${id}`,
         json({ envelope: encodeBase64(envelope), has_blob: hasBlob }),
-        { 409: "서버의 항목과 모양이 달라 올리지 못했어요." },
+        { 409: "서버에 같은 항목이 다른 내용으로 있어서 업로드하지 못했어요." },
       );
       const body = (await response.json()) as { blob_pending?: boolean };
       return { blobPending: body.blob_pending === true };
@@ -197,19 +197,19 @@ export class Relay {
       });
     } catch (e) {
       if (signal?.aborted) throw e;
-      throw new RelayError(`서버에 연결할 수 없어요. (${describe(e)})`, null);
+      throw new RelayError(`서버에 연결할 수 없어요. 인터넷과 서버 주소를 확인해주세요. (${describe(e)})`, null);
     }
     if (response.ok) return response;
     const status = response.status;
     const message =
       messages[status] ??
       (status === 401
-        ? "이 기기의 연결이 해제됐어요. 연결을 해제한 뒤 QR로 다시 연결해 주세요."
+        ? "이 기기의 연결이 끊겼어요. 설정에서 연결 해제를 누른 뒤 QR로 다시 연결해주세요."
         : status === 413
-          ? "너무 커서 올릴 수 없어요."
+          ? "너무 커서 업로드할 수 없어요."
           : status === 429
-            ? "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해 주세요."
-            : `서버 오류예요. (HTTP ${status})`);
+            ? "실패한 시도가 많아 잠시 막혔어요. 10분 뒤 다시 시도해주세요."
+            : `서버에 잠깐 문제가 생겼어요. 잠시 후 다시 시도해주세요. (HTTP ${status})`);
     throw new RelayError(message, status);
   }
 }

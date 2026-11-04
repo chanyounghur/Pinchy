@@ -39,7 +39,7 @@ fn menu_label(phase: &str) -> &'static str {
     match phase {
         "checking" => "업데이트 확인 중…",
         "downloading" => "업데이트 다운로드 중…",
-        "ready" => "설치하고 재시작",
+        "ready" => "설치하고 다시 시작",
         "installing" => "설치 중…",
         _ => "업데이트 확인",
     }
@@ -186,7 +186,7 @@ mod tests {
 
     #[test]
     fn menu_label_offers_install_only_when_ready() {
-        assert_eq!(menu_label("ready"), "설치하고 재시작");
+        assert_eq!(menu_label("ready"), "설치하고 다시 시작");
         for phase in ["idle", "latest", "error"] {
             assert_eq!(menu_label(phase), "업데이트 확인");
         }

@@ -39,7 +39,7 @@ export function useItemActions(): ItemActions {
         if (!ready) return;
         await copyAny(ready);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        toast("복사됨");
+        toast("복사했어요");
       } catch (e) {
         toast(e instanceof Error ? e.message : "복사하지 못했어요");
       }

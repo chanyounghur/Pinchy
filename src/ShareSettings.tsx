@@ -26,7 +26,7 @@ const INVITE_SECONDS = 600;
 function statusText(status: Status | null) {
   if (!status || status.state === "connecting") return "연결 확인 중…";
   if (status.state === "off") return "꺼짐";
-  if (status.state === "error") return "연결 문제";
+  if (status.state === "error") return "연결 안 됨";
   return `연결됨 · 기기 ${status.devices}대`;
 }
 
@@ -56,7 +56,7 @@ function Invite({ onClose, onJoined }: { onClose: () => void; onJoined: () => vo
         if (disposed) return;
         if (payload.state === "joined") { setResult({ kind: "ok", text: `${payload.name} 기기를 연결했어요.` }); onJoined(); }
         else if (payload.state === "failed") setResult({ kind: "err", text: payload.message });
-        else setResult({ kind: "err", text: "코드가 만료됐어요. 필요하면 새 코드를 만들어 주세요." });
+        else setResult({ kind: "err", text: "코드 시간이 지났어요. 새 코드를 만들어주세요." });
       });
       if (disposed) { stop(); return; }
       unlisten = stop;
@@ -79,9 +79,9 @@ function Invite({ onClose, onJoined }: { onClose: () => void; onJoined: () => vo
 
   return <div className="share-invite" role="group" aria-label="컴퓨터 추가">
     {result ? <p className={result.kind === "ok" ? "storage-message" : "update-error"} role="status">{result.text}</p> : <>
-      <p>새 컴퓨터의 Pinchy 설정에서 서버 주소와 아래 코드를 입력하세요.</p>
+      <p>새 컴퓨터의 Pinchy 설정에서 서버 주소와 아래 코드를 입력해주세요.</p>
       <div className="share-code" aria-live="polite">{code ?? "코드 만드는 중…"}</div>
-      <p className="hint">{code ? `${countdown(left)} 안에 입력하세요. 한 번만 쓸 수 있어요.` : ""}</p>
+      <p className="hint">{code ? `${countdown(left)} 안에 입력해주세요. 한 번만 쓸 수 있어요.` : ""}</p>
     </>}
     <div className="row"><button onClick={onClose}>{result ? "닫기" : "취소"}</button></div>
   </div>;
@@ -110,10 +110,10 @@ function PhoneInviteView({ onClose }: { onClose: () => void }) {
   const expired = invite !== null && left === 0;
   return <div className="share-invite" role="group" aria-label="휴대폰 추가">
     {error ? <p className="update-error" role="alert">{error}</p> : <>
-      <p>휴대폰 카메라로 아래 QR 코드를 찍으세요. 서버 주소, 일회용 연결 코드, 공유 키가 들어 있으니 다른 사람에게 보이지 않게 하세요.</p>
+      <p>휴대폰 카메라로 아래 QR 코드를 찍어주세요. 연결 정보가 모두 들어 있어서 다른 사람에게는 보여주지 마세요.</p>
       <div className={`share-qr ${expired ? "expired" : ""}`} aria-label="연결 QR 코드"
         dangerouslySetInnerHTML={{ __html: invite?.svg ?? "" }} />
-      <p className="hint">{!invite ? "QR 코드 만드는 중…" : expired ? "코드가 만료됐어요. 닫고 다시 열어 주세요." : `${countdown(left)} 안에 찍으세요. 한 번만 쓸 수 있어요.`}</p>
+      <p className="hint">{!invite ? "QR 코드 만드는 중…" : expired ? "코드 시간이 지났어요. 닫고 다시 열어주세요." : `${countdown(left)} 안에 찍어주세요. 한 번만 쓸 수 있어요.`}</p>
     </>}
     <div className="row"><button onClick={onClose}>{expired || error ? "닫기" : "취소"}</button></div>
   </div>;
@@ -180,7 +180,7 @@ export default function ShareSettings() {
     setSaved(settings.share);
     setName(settings.share?.name ?? "");
     setForm((f) => ({ ...f, code: "" }));
-    setMessage("연결했어요. 다른 기기의 히스토리를 받아오고 이 기기의 히스토리를 올리는 중이에요.");
+    setMessage("연결했어요. 지금 다른 기기와 히스토리를 맞추고 있어요.");
   });
   const rename = () => run(async () => {
     const next = await invoke<string>("set_share_name", { name });
@@ -228,7 +228,7 @@ export default function ShareSettings() {
       <div className="share-summary">
         <div><span>서버</span><strong>{saved.server.replace(/^https?:\/\//, "")}</strong></div>
       </div>
-      <p className="note">연결된 모든 기기가 같은 히스토리를 가져요. 어느 기기에서 복사하든 모두에 쌓이고, 지우면 모두에서 지워져요. 파일은 합쳐서 128MB까지만 올라가고, 폴더와 더 큰 파일은 이 기기에만 남아요.</p>
+      <p className="note">연결된 기기끼리 히스토리를 함께 써요. 한 기기에서 복사하거나 지우면 다른 기기에도 똑같이 보여요. 파일은 합쳐서 128MB까지 올릴 수 있고, 폴더나 더 큰 파일은 이 기기에만 남아요.</p>
       {status?.state === "error" && <p className="update-error" role="alert">{status.message}</p>}
       <ul className="share-devices" aria-label="연결된 기기">
         {(devices ?? []).map((d) => <li key={d.id}>
@@ -245,11 +245,11 @@ export default function ShareSettings() {
           <button className="danger" disabled={busy} onClick={() => setConfirmLeave(true)}>이 기기 연결 해제</button>
         </div>}
       {confirmLeave && <div className="storage-confirm" role="group" aria-label="연결 해제 확인">
-        <p>이 기기의 연결을 해제할까요? 히스토리는 이 기기에 남지만 더는 다른 기기와 맞춰지지 않아요. 다시 연결하려면 다른 기기에서 새 코드를 받아야 하고, 마지막 기기라면 서버 로그에 새 첫 연결 코드가 나와요.</p>
+        <p>이 기기의 연결을 해제할까요? 히스토리는 남지만 다른 기기와 더 이상 맞춰지지 않아요. {devices && devices.length <= 1 ? "마지막 기기라서, 다시 연결하려면 서버 로그에 새로 나온 첫 연결 코드를 입력해야 해요." : "다시 연결하려면 다른 기기에서 새 코드를 받아야 해요."}</p>
         <div className="row"><button className="primary" disabled={busy} onClick={() => void leave()}>{busy ? "해제 중…" : "연결 해제"}</button>
-          <button disabled={busy} onClick={() => setConfirmLeave(false)}>취소</button></div>
+          <button disabled={busy} onClick={() => setConfirmLeave(false)}>닫기</button></div>
       </div>}
-      <p className="note">내용과 기기 이름은 기기끼리만 아는 키로 암호화되어 서버는 읽을 수 없습니다. 비밀번호 관리자에서 복사한 내용은 서버 설정에서 허용하지 않으면 이 기기에만 남아요.</p>
+      <p className="note">복사한 내용과 기기 이름은 내 기기끼리만 아는 키로 암호화해서 보내요. 서버는 내용을 볼 수 없어요. 비밀번호 관리자에서 복사한 내용은 서버에서 허용할 때만 동기화되고, 아니면 이 기기에만 남아요.</p>
     </> : <fieldset className="share-fields" disabled={busy || !loaded}>
       <label>이 기기 이름<input maxLength={64} placeholder="다른 기기에 표시될 이름" autoComplete="off" spellCheck={false} {...field("name")} /></label>
       <label>서버 주소<input type="url" placeholder="https://example.iptime.org" autoComplete="off" spellCheck={false} {...field("server")} /></label>
@@ -257,7 +257,7 @@ export default function ShareSettings() {
       <div className="row">
         <button className="primary" disabled={!form.server.trim() || !form.code.trim()} onClick={() => void join()}>{busy ? "연결 중…" : "연결"}</button>
       </div>
-      <p className="note">이미 연결된 기기의 설정에서 <b>컴퓨터 추가</b>를 누르면 코드가 나옵니다. 처음 연결하는 기기라면 서버를 처음 실행할 때 로그에 나온 첫 연결 코드(예: 1234-5678-9012)를 입력하세요. 연결하면 서버의 히스토리를 받아오고 이 기기의 히스토리도 올라가 모든 기기가 같아져요.</p>
+      <p className="note">코드는 이렇게 받을 수 있어요.<br />· 연결된 기기가 있다면: 그 기기 설정에서 <b>컴퓨터 추가</b> 누르기<br />· 처음 연결한다면: 서버를 처음 켤 때 로그에 나온 첫 연결 코드(예: 1234-5678-9012) 입력하기<br />연결하면 이 기기의 히스토리도 함께 올라가요.</p>
     </fieldset>}
     {message && <p className="storage-message" role="status">{message}</p>}
     {error && <p className="update-error" role="alert">{error}</p>}

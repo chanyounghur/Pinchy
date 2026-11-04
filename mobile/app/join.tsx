@@ -1,4 +1,4 @@
-// First run: scan the QR the desktop shows under 설정 → 공유 → 휴대폰 추가.
+// First run: scan the QR the desktop shows under 설정 → 기기 간 동기화 → 휴대폰 추가.
 
 import { CameraView, useCameraPermissions } from "expo-camera";
 import * as Clipboard from "expo-clipboard";
@@ -41,7 +41,7 @@ export default function Join() {
   const fromClipboard = useCallback(async () => {
     const text = await Clipboard.getStringAsync();
     if (!parseJoinLink(text)) {
-      setError("클립보드에 Pinchy 연결 링크가 없어요. 데스크톱 QR 아래의 링크를 복사해 오세요.");
+      setError("클립보드에 Pinchy 연결 링크가 없어요. 컴퓨터에 나온 QR을 찍어주세요.");
       return;
     }
     await join(text);
@@ -66,7 +66,7 @@ export default function Join() {
           />
         ) : (
           <View style={[styles.camera, styles.cameraOff]}>
-            <Text style={styles.cameraOffText}>{permission === null ? "" : permission.canAskAgain ? "카메라를 허용하면 QR을 찍을 수 있어요" : "설정에서 Pinchy의 카메라 접근을 허용해 주세요"}</Text>
+            <Text style={styles.cameraOffText}>{permission === null ? "" : permission.canAskAgain ? "카메라를 허용하면 QR을 찍을 수 있어요" : "설정에서 Pinchy의 카메라 접근을 허용해주세요"}</Text>
             {permission && (
               <Pressable
                 onPress={() => (permission.canAskAgain ? void requestPermission() : void Linking.openSettings())}
@@ -90,16 +90,16 @@ export default function Join() {
       </View>
 
       <View style={styles.copy}>
-        <Text style={styles.heading}>데스크톱의 QR을 찍어 주세요</Text>
+        <Text style={styles.heading}>컴퓨터에 나온 QR을 찍어주세요</Text>
         <Text style={styles.body}>
-          컴퓨터에서 Pinchy 설정 → 공유 → <Text style={styles.strong}>휴대폰 추가</Text>를 누르면 QR이 나와요. 코드는 10분 동안 유효해요.
+          컴퓨터의 Pinchy 설정 중 기기 간 동기화에서 <Text style={styles.strong}>휴대폰 추가</Text>를 누르면 QR이 나와요. QR은 10분 동안 쓸 수 있어요.
         </Text>
         {error ? <Text style={styles.error}>{error}</Text> : null}
       </View>
 
       <View style={styles.bottom}>
         <Button title="복사한 링크로 연결" kind="secondary" onPress={() => void fromClipboard()} busy={busy} style={styles.secondary} />
-        <Text style={styles.hint}>공유 키는 이 폰의 보안 저장소에만 저장돼요</Text>
+        <Text style={styles.hint}>연결 정보는 이 휴대폰에만 안전하게 보관해요</Text>
       </View>
     </View>
   );

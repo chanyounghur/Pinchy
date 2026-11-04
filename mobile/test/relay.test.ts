@@ -53,9 +53,9 @@ test("maps the relay's statuses to outcomes and Korean messages", async () => {
   status = 410;
   assert.equal(await relay.putItem("abc", new Uint8Array([1]), false), "deleted");
   status = 401;
-  await assert.rejects(relay.me(), (e: unknown) => e instanceof RelayError && e.status === 401 && /연결이 해제/.test(e.message));
+  await assert.rejects(relay.me(), (e: unknown) => e instanceof RelayError && e.status === 401 && /연결이 끊겼어요/.test(e.message));
   status = 403;
-  await assert.rejects(relay.join("c", "l"), /코드가 틀렸거나 만료/);
+  await assert.rejects(relay.join("c", "l"), /코드가 틀렸거나 시간이 지났어요/);
   const down = new Relay("https://relay.test", null, async () => {
     throw new Error("ECONNREFUSED");
   });

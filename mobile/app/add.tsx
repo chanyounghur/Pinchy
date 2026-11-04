@@ -65,7 +65,7 @@ export default function Add() {
       setPendingDraft(draft);
       router.replace("/upload?source=picked");
     } catch (e) {
-      toast(e instanceof Error ? e.message : "고른 것을 읽지 못했어요");
+      toast(e instanceof Error ? e.message : "고른 사진이나 파일을 읽지 못했어요. 다시 골라주세요");
     } finally {
       setBusy(null);
     }
@@ -80,7 +80,7 @@ export default function Add() {
       toast("업로드했어요");
       router.back();
     } catch (e) {
-      toast(e instanceof Error ? e.message : "올리지 못했어요");
+      toast(e instanceof Error ? e.message : "업로드하지 못했어요");
     } finally {
       setBusy(null);
     }
@@ -112,7 +112,7 @@ export default function Add() {
 
       <View style={styles.sectionRow}>
         <Text style={[styles.section, { color: t.muted }]}>클립보드</Text>
-        {clip ? <Text style={{ color: t.muted, fontSize: 12 }}>터치하면 바로 올라가요</Text> : null}
+        {clip ? <Text style={{ color: t.muted, fontSize: 12 }}>누르면 바로 업로드해요</Text> : null}
       </View>
 
       {clip === undefined ? (
@@ -132,7 +132,7 @@ export default function Add() {
       )}
 
       {Platform.OS === "ios" ? (
-        <Text style={[styles.note, { color: t.muted }]}>iOS가 붙여넣기를 물어보면 허용해 주세요. 설정 → Pinchy → 다른 앱에서 붙여넣기를 "허용"으로 두면 다시 묻지 않아요.</Text>
+        <Text style={[styles.note, { color: t.muted }]}>붙여넣기를 허용할지 물어보면 허용을 눌러주세요. iPhone 설정의 Pinchy에서 '다른 앱에서 붙여넣기'를 허용으로 바꾸면 다시 묻지 않아요.</Text>
       ) : null}
     </View>
   );

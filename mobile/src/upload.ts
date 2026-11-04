@@ -37,7 +37,7 @@ export function isLink(text: string): boolean {
 /// Null when the draft fits the relay's limits, else why not.
 export function tooLarge(draft: Draft, maxBlobMb: number): string | null {
   const size = draft.png?.length ?? draft.files?.reduce((n, f) => n + f.bytes.length, 0) ?? 0;
-  if (size > maxBlobMb * MB) return `너무 커요. 서버가 받는 최대 크기는 ${maxBlobMb}MB예요.`;
+  if (size > maxBlobMb * MB) return `파일이 너무 커요. ${maxBlobMb}MB까지 업로드할 수 있어요.`;
   return null;
 }
 
@@ -57,7 +57,7 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
   };
   const envelope = engine.key.seal("meta", id, encodeMeta(meta));
   const result = await engine.relay.putItem(id, envelope, blob !== undefined);
-  if (result === "deleted") throw new Error("서버가 이 항목을 이미 지운 것으로 알고 있어요.");
+  if (result === "deleted") throw new Error("이미 지워진 항목이에요.");
   if (result.blobPending && blob) {
     await engine.relay.uploadBlob(id, engine.key.seal("blob", id, blob));
   }

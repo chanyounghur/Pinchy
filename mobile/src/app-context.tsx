@@ -54,7 +54,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const build = useCallback(
     async (s: Session): Promise<SyncEngine> => {
       const key = Key.parse(s.key, random);
-      if (!key) throw new Error("저장된 공유 키가 손상됐어요. 연결을 해제하고 다시 연결해 주세요.");
+      if (!key) throw new Error("저장된 공유 키가 손상됐어요. 연결을 해제하고 다시 연결해주세요.");
       const relay = new Relay(s.server, s.token, fetchImpl);
       return new SyncEngine(relay, key, await openDb(), s.deviceId);
     },
@@ -107,7 +107,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const connect = useCallback(
     async (link: string) => {
       const parsed = parseJoinLink(link);
-      if (!parsed) throw new Error("Pinchy QR이 아니에요. 데스크톱 설정 → 공유 → 휴대폰 추가의 QR을 찍어 주세요.");
+      if (!parsed) throw new Error("Pinchy 연결 QR이 아니에요. 컴퓨터 설정의 기기 간 동기화에서 휴대폰 추가를 눌러 나온 QR을 찍어주세요.");
       const server = normalizeServer(parsed.server);
       if (!server) throw new Error("서버 주소를 읽지 못했어요.");
       const key = Key.parse(parsed.key, random);

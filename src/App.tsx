@@ -356,7 +356,7 @@ export default function App() {
               )}
             </div>
             <div className="card-foot">
-              {item.origin_device && <span className="origin" title={`${item.origin_device}에서 복사함`}>↓ {item.origin_device}</span>}
+              {item.origin_device && <span className="origin" title={`${item.origin_device}에서 복사했어요`}>↓ {item.origin_device}</span>}
               {item.concealed && <span className="concealed" title="비밀번호 관리자에서 복사한 내용이라 이 기기에만 남아요">숨김</span>}
               <span>{footerText(item)}</span>
               {i < 9 && (

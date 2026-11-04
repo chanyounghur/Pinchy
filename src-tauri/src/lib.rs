@@ -47,7 +47,7 @@ fn apply_shortcut(app: &AppHandle, shortcut: &str, previous: Option<&str>) -> Re
             if let Some(prev) = previous {
                 let _ = gs.register(prev);
             }
-            Err(format!("단축키를 등록할 수 없어요: {e}"))
+            Err(format!("이 단축키는 쓸 수 없어요. 다른 조합을 눌러주세요. ({e})"))
         }
     }
 }
@@ -69,7 +69,7 @@ fn get_settings(store: State<SettingsStore>) -> Settings {
 fn set_shortcut(app: AppHandle, store: State<SettingsStore>, shortcut: String) -> Result<(), String> {
     let shortcut = shortcut.trim().to_string();
     if shortcut.is_empty() {
-        return Err("단축키가 비어 있어요".into());
+        return Err("단축키를 눌러주세요".into());
     }
     let settings = store.get();
     apply_shortcut(&app, &shortcut, Some(&settings.shortcut))?;

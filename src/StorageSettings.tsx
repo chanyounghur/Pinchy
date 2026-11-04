@@ -107,7 +107,7 @@ export default function StorageSettings() {
       } else {
         await invoke("clear_history");
         setUsage(await invoke<Usage>("storage_usage"));
-        setMessage("히스토리를 모두 제거했어요.");
+        setMessage("히스토리를 비웠어요.");
       }
     } catch (e) {
       setError(String(e));
@@ -125,13 +125,13 @@ export default function StorageSettings() {
   };
 
   const clearButton = <button className="danger" disabled={busy || !usage || usage.count === 0}
-    onClick={() => { setMessage(""); setConfirm("clear"); }}>히스토리 제거</button>;
-  const clearConfirm = confirm === "clear" && <div className="storage-confirm" role="group" aria-label="히스토리 제거 확인">
-    <p>{`기록 ${usage?.count.toLocaleString() ?? "전체"}개와 저장된 이미지·미리보기를 모두 제거할까요? 복사했던 원본 파일은 유지됩니다.`}{policy ? " 연결된 다른 기기의 히스토리도 함께 지워져요." : ""}</p>
-    <p>삭제한 기록은 되돌릴 수 없습니다.</p>
+    onClick={() => { setMessage(""); setConfirm("clear"); }}>히스토리 비우기</button>;
+  const clearConfirm = confirm === "clear" && <div className="storage-confirm" role="group" aria-label="히스토리 비우기 확인">
+    <p>{`${usage ? `기록 ${usage.count.toLocaleString()}개를` : "기록을"} 모두 지울까요? 이미지와 미리보기도 함께 지워져요. 복사했던 원본 파일은 그대로 남아요.`}{policy ? " 연결된 다른 기기에서도 지워져요." : ""}</p>
+    <p>지운 기록은 되돌릴 수 없어요.</p>
     <div className="row"><button className="primary" disabled={busy} onClick={() => void run("clear")}>
-      {busy ? "처리 중…" : "모두 제거"}
-    </button><button disabled={busy} onClick={() => setConfirm(null)}>취소</button></div>
+      {busy ? "처리 중…" : "모두 지우기"}
+    </button><button disabled={busy} onClick={() => setConfirm(null)}>닫기</button></div>
   </div>;
 
   if (policy) {
@@ -146,9 +146,9 @@ export default function StorageSettings() {
         <div><span>보관 기간</span><strong>{policy.retention_days.toLocaleString()}일</strong></div>
         <div><span>최대 용량</span><strong>{policy.max_storage_mb.toLocaleString()}MB</strong></div>
         <div><span>서버 사용량</span><strong>{policy.usage ? `${formatBytes(policy.usage.bytes)} · 기록 ${policy.usage.items.toLocaleString()}개` : "확인 중…"}</strong></div>
-        <div><span>비밀번호 관리자 복사</span><strong>{policy.sync_concealed ? "동기화함" : "이 기기에만 보관"}</strong></div>
+        <div><span>비밀번호 관리자 항목</span><strong>{policy.sync_concealed ? "동기화함" : "이 기기에만 보관"}</strong></div>
       </div>
-      <p className="note">기기 간 동기화에 연결된 동안은 서버의 보관 정책을 따릅니다. 마지막 복사 시점부터 보관 기간이 지났거나 최대 용량을 넘으면 서버가 오래된 기록부터 모든 기기에서 지웁니다. 서버를 실행할 때 옵션으로 바꿀 수 있어요.</p>
+      <p className="note">동기화를 연결한 동안에는 서버에 정해진 보관 기간과 용량을 따라요. 마지막으로 복사한 지 보관 기간이 지나거나 최대 용량을 넘으면 오래된 기록부터 모든 기기에서 지워져요.</p>
       <div className="row storage-actions">{clearButton}</div>
       {clearConfirm}
       {busy && !confirm && <p className="note" role="status">처리 중…</p>}
@@ -180,9 +180,9 @@ export default function StorageSettings() {
           onChange={(e) => { setMaxMb(e.target.value); resetNotice(); }} /><span>MB</span></div>
       </div>
     </fieldset>
-    <p className="note">선택한 조건 중 하나라도 초과하면 오래된 기록부터 정리합니다. 둘 다 끄면 자동으로 삭제하지 않습니다. 기기 간 동기화에 연결하면 이 설정 대신 서버의 보관 정책을 따릅니다.</p>
-    <p className="note storage-detail">기간은 마지막 복사 시점 기준이며, 실행 중 1분마다 확인합니다. 용량은 기록·이미지·미리보기·앱 캐시를 포함합니다. 1,024MB = 1GB.</p>
-    {!valid && <p className="update-error" role="alert">기간은 1~36,500일, 용량은 1~1,048,576MB 사이의 정수로 입력해 주세요.</p>}
+    <p className="note">켜둔 조건을 하나라도 넘으면 오래된 기록부터 지워요. 둘 다 끄면 자동으로 지우지 않아요. 동기화를 연결하면 이 설정 대신 서버에 정해진 기준을 따라요.</p>
+    <p className="note storage-detail">기간은 마지막으로 복사한 때부터 세고, 앱이 켜져 있는 동안 1분마다 확인해요. 용량에는 기록, 이미지, 미리보기, 앱 캐시가 모두 들어가요. 1GB는 1,024MB예요.</p>
+    {!valid && <p className="update-error" role="alert">기간은 1~36,500일, 용량은 1~1,048,576MB 사이로 소수점 없이 입력해주세요.</p>}
     <div className="row storage-actions">
       <button className="primary" disabled={busy || !saved || !changed || !valid}
         onClick={() => { setMessage(""); if (daysEnabled || sizeEnabled) setConfirm("save"); else void run("save"); }}>설정 저장</button>
@@ -190,15 +190,15 @@ export default function StorageSettings() {
     </div>
     {clearConfirm}
     {confirm === "save" && <div className="storage-confirm" role="group" aria-label="보관 설정 적용 확인">
-      <p>{`${[daysEnabled ? `${days}일이 지난 기록` : "", sizeEnabled ? `${maxMb}MB를 초과하는 오래된 기록` : ""].filter(Boolean).join(" 또는 ")}을 지금부터 자동으로 삭제합니다.`}</p>
-      <p>삭제한 기록은 되돌릴 수 없습니다.</p>
+      <p>{`지금부터 ${[daysEnabled ? `${days}일이 지난 기록` : "", sizeEnabled ? `${maxMb}MB를 넘는 오래된 기록` : ""].filter(Boolean).join("과 ")}을 자동으로 지워요.`}</p>
+      <p>지운 기록은 되돌릴 수 없어요.</p>
       <div className="row"><button className="primary" disabled={busy} onClick={() => void run("save")}>
-        {busy ? "처리 중…" : "적용하고 정리"}
-      </button><button disabled={busy} onClick={() => setConfirm(null)}>취소</button></div>
+        {busy ? "처리 중…" : "저장하고 정리하기"}
+      </button><button disabled={busy} onClick={() => setConfirm(null)}>닫기</button></div>
     </div>}
     {busy && !confirm && <p className="note" role="status">처리 중…</p>}
     {message && <p className="storage-message" role="status">{message}</p>}
     {error && <p className="update-error" role="alert">{error}</p>}
-    <p className="note storage-detail">기록을 모두 제거해도 앱 실행에 필요한 기본 저장 공간은 남습니다.</p>
+    <p className="note storage-detail">기록을 모두 지워도 앱이 쓰는 기본 공간은 조금 남아요.</p>
   </section>;
 }

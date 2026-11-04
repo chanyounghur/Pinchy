@@ -58,12 +58,12 @@ export default function Viewer() {
       } else if (which === "copy") {
         await copyPicture(item, current);
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        say("복사됨");
+        say("복사했어요");
       } else {
         await sharePicture(item, current);
       }
     } catch (e) {
-      say(e instanceof Error ? e.message : "하지 못했어요");
+      say(e instanceof Error ? e.message : { save: "저장하지 못했어요", copy: "복사하지 못했어요", share: "공유하지 못했어요" }[which]);
     } finally {
       setBusy(null);
     }
@@ -76,7 +76,7 @@ export default function Viewer() {
       {total === 0 ? (
         <View style={styles.center}>
           {item === null ? (
-            <Text style={styles.muted}>이 항목은 삭제됐어요.</Text>
+            <Text style={styles.muted}>이미 지워진 항목이에요.</Text>
           ) : item?.blob_state === "failed" ? (
             <Text style={styles.muted}>사진을 받지 못했어요</Text>
           ) : (

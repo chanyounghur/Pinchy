@@ -28,7 +28,7 @@ export default function History() {
   }, [session, share.hasShareIntent, router]);
 
   useEffect(() => {
-    if (updateReady) toast("새 버전을 받았어요. 다시 열면 적용돼요");
+    if (updateReady) toast("새 버전을 받았어요. 앱을 다시 열면 바뀌어요");
   }, [updateReady, toast]);
 
   const actions = useItemActions();
@@ -54,13 +54,13 @@ export default function History() {
       ? "동기화됨"
       : status.state === "syncing"
         ? status.initial
-          ? "처음 받는 중…"
+          ? "히스토리 받는 중…"
           : "동기화 중…"
         : status.state === "offline"
           ? "오프라인"
           : status.state === "unauthorized"
             ? "연결 해제됨"
-            : "대기";
+            : "연결 준비 중";
   const dot = status.state === "live" ? t.ok : status.state === "offline" || status.state === "unauthorized" ? t.danger : t.muted;
 
   return (

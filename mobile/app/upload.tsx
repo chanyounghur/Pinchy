@@ -67,16 +67,13 @@ export default function Upload() {
       toast("업로드했어요");
       close();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "올리지 못했어요.");
+      setError(e instanceof Error ? e.message : "업로드하지 못했어요.");
     } finally {
       setBusy(false);
     }
   };
 
-  const hint =
-    draft?.kind === "files" && !fromShare
-      ? "이 폰에서 암호화한 뒤 올라가요. 연결된 모든 기기의 히스토리에 바로 나타나요. 사진 한 장은 이미지로, 여러 장은 사진 묶음으로 올라가요."
-      : "이 폰에서 암호화한 뒤 올라가요. 연결된 모든 기기의 히스토리에 바로 나타나요.";
+  const hint = "업로드하면 연결된 모든 기기의 히스토리에 바로 보여요. 이 휴대폰에서 암호화한 뒤 보내서 서버는 내용을 볼 수 없어요.";
 
   return (
     <View style={[styles.screen, { backgroundColor: t.bg, paddingBottom: insets.bottom + 16 }]}>
@@ -85,7 +82,7 @@ export default function Upload() {
       </View>
       <View style={styles.titleRow}>
         <Text style={[styles.title, { color: t.fg }]}>업로드</Text>
-        <Text style={{ color: t.muted, fontSize: 13, fontWeight: "500" }}>{fromShare ? "공유됨" : "이 폰에서"}</Text>
+        <Text style={{ color: t.muted, fontSize: 13, fontWeight: "500" }}>{fromShare ? "공유됨" : "이 휴대폰에서"}</Text>
       </View>
 
       <ScrollView contentContainerStyle={styles.content}>
@@ -95,7 +92,7 @@ export default function Upload() {
           </View>
         ) : draft === null ? (
           <View style={styles.center}>
-            <Text style={{ color: t.muted, fontSize: 15, textAlign: "center", lineHeight: 22 }}>{error ?? (fromShare ? "공유된 내용이 없어요." : "고른 것이 없어요.")}</Text>
+            <Text style={{ color: t.muted, fontSize: 15, textAlign: "center", lineHeight: 22 }}>{error ?? (fromShare ? "공유된 내용이 없어요." : "고른 항목이 없어요.")}</Text>
           </View>
         ) : (
           <DraftCard draft={draft} from={session?.name} />

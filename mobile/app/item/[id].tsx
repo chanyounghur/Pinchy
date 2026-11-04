@@ -30,7 +30,7 @@ export default function Detail() {
       const result = await copyItem(engine, item);
       if (result === "copied") {
         void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        toast("복사됨");
+        toast("복사했어요");
       } else if (result === "pending") toast("아직 받는 중이에요");
     } catch (e) {
       toast(e instanceof Error ? e.message : "복사하지 못했어요");
@@ -55,14 +55,14 @@ export default function Detail() {
 
   const remove = useCallback(() => {
     if (!engine || !item) return;
-    Alert.alert("모든 기기에서 삭제", "서버와 연결된 모든 기기의 히스토리에서 사라져요.", [
-      { text: "취소", style: "cancel" },
+    Alert.alert("모든 기기에서 지울까요?", "연결된 모든 기기의 히스토리에서 사라지고, 되돌릴 수 없어요.", [
+      { text: "닫기", style: "cancel" },
       {
-        text: "삭제",
+        text: "지우기",
         style: "destructive",
         onPress: () => {
           router.back();
-          engine.deleteItem(item.id).catch((e: unknown) => toast(e instanceof Error ? e.message : "삭제하지 못했어요"));
+          engine.deleteItem(item.id).catch((e: unknown) => toast(e instanceof Error ? e.message : "지우지 못했어요"));
         },
       },
     ]);
@@ -73,7 +73,7 @@ export default function Detail() {
     return (
       <View style={[styles.screen, { backgroundColor: t.bg, paddingTop: insets.top }]}>
         <Header onBack={() => router.back()} color={t.origin} />
-        <Text style={{ color: t.muted, textAlign: "center", marginTop: 80 }}>이 항목은 삭제됐어요.</Text>
+        <Text style={{ color: t.muted, textAlign: "center", marginTop: 80 }}>이미 지워진 항목이에요.</Text>
       </View>
     );
   }
@@ -117,7 +117,7 @@ export default function Detail() {
         <Button title={item.kind === "files" ? "파일 내보내기" : "복사"} onPress={() => void copy()} busy={busy} />
         <View style={styles.actionRow}>
           <Button title="공유" kind="secondary" onPress={() => void share()} style={styles.half} />
-          <Button title="모든 기기에서 삭제" kind="danger" onPress={remove} style={styles.half} />
+          <Button title="모든 기기에서 지우기" kind="danger" onPress={remove} style={styles.half} />
         </View>
       </View>
     </View>

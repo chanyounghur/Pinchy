@@ -129,7 +129,7 @@ export async function savePictures(item: Item, index?: number): Promise<number> 
   const chosen = index === undefined ? uris : uris.slice(index, index + 1);
   if (chosen.length === 0) throw new Error("아직 받는 중이에요");
   const permission = await MediaLibrary.requestPermissionsAsync(true);
-  if (!permission.granted) throw new Error("사진 앱에 추가할 권한이 없어요. 설정에서 허용해 주세요.");
+  if (!permission.granted) throw new Error("앨범에 저장하려면 설정에서 사진 접근을 허용해주세요.");
   for (const uri of chosen) await MediaLibrary.Asset.create(uri);
   return chosen.length;
 }
@@ -189,7 +189,7 @@ export async function copyAny(item: Item): Promise<void> {
   } else if (item.kind === "image" || isPhotoBundle(item.kind, item.files)) {
     await copyPicture(item, 0);
   } else {
-    throw new Error("파일은 복사할 수 없어요. 저장이나 공유를 써 주세요.");
+    throw new Error("파일은 복사할 수 없어요. 저장하거나 공유해주세요.");
   }
 }
 

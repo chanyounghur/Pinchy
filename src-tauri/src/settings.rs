@@ -110,10 +110,10 @@ impl Default for Retention {
 impl Retention {
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=36500).contains(&self.days) {
-            return Err("보관 기간은 1~36,500일 사이의 정수로 입력해 주세요.".into());
+            return Err("보관 기간은 1~36,500일 사이로 소수점 없이 입력해주세요.".into());
         }
         if !(1..=1_048_576).contains(&self.max_mb) {
-            return Err("최대 용량은 1~1,048,576MB 사이의 정수로 입력해 주세요.".into());
+            return Err("최대 용량은 1~1,048,576MB 사이로 소수점 없이 입력해주세요.".into());
         }
         Ok(())
     }
