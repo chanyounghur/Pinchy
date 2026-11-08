@@ -391,6 +391,26 @@ impl Db {
             .optional()
     }
 
+    /// Every image row's id and file path.
+    pub fn image_rows(&self) -> rusqlite::Result<Vec<(i64, String)>> {
+        let conn = self.0.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, content FROM items WHERE kind = 'image'")?;
+        let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+        rows.collect()
+    }
+
+    /// Re-keys a row. Fails, leaving it as it was, when another row has `hash`.
+    pub fn set_hash(&self, id: i64, hash: &str) -> rusqlite::Result<()> {
+        let conn = self.0.lock().unwrap();
+        conn.execute("UPDATE items SET hash = ?1 WHERE id = ?2", params![hash, id])?;
+        Ok(())
+    }
+
+    pub fn hash_of(&self, id: i64) -> Option<String> {
+        let conn = self.0.lock().unwrap();
+        conn.query_row("SELECT hash FROM items WHERE id = ?1", params![id], |r| r.get(0)).ok()
+    }
+
     pub fn sync_value(&self, key: &str) -> rusqlite::Result<Option<String>> {
         let conn = self.0.lock().unwrap();
         conn.query_row("SELECT value FROM sync WHERE key = ?1", params![key], |r| r.get(0)).optional()

@@ -55,6 +55,9 @@ const RECEIVED_COLOR: &str = "#c64735";
 const NONCE_LEN: usize = 24;
 const POLL_SECS: u64 = 25;
 const PAGE: i64 = 200;
+/// A received item goes onto the clipboard only when it was copied this
+/// recently, so catching up after sleep does not overwrite the clipboard.
+const FRESH_MS: i64 = 2 * 60 * 1000;
 const POLICY_REFRESH: Duration = Duration::from_secs(600);
 const MAX_NAME_CHARS: usize = 64;
 const INVITE_TTL: Duration = Duration::from_secs(600);
@@ -1090,7 +1093,7 @@ impl Opened {
     fn into_item(self, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
-            Content::Png(png, w, h) => clipboard::png_item(&dirs.images, &png, w, h)?,
+            Content::Png(png, w, h) => clipboard::received_png_item(&dirs.images, &png, w, h)?,
             Content::Files(files) => clipboard::received_files_item(&dirs.files, &files)?,
         };
         let look = self.app.as_deref().and_then(|app| icons.look_by_name(app));
@@ -1549,6 +1552,8 @@ fn pull_loop(app: AppHandle, dirs: Dirs) {
         backoff = 5;
         let mut changed = false;
         let mut stopped = None;
+        // The newest item another device copied, to put on the clipboard.
+        let mut newest: Option<&str> = None;
         for change in &page.items {
             if let Some((_, ids)) = full_sync.as_mut() {
                 if !change.deleted {
@@ -1559,7 +1564,12 @@ fn pull_loop(app: AppHandle, dirs: Dirs) {
                 continue;
             }
             match apply(&app, &relay, &db, change, &dirs, &mut icons) {
-                Ok(did) => changed |= did,
+                Ok(did) => {
+                    changed |= did;
+                    if did && !change.deleted && full_sync.is_none() {
+                        newest = Some(change.id.as_str());
+                    }
+                }
                 Err(ReceiveError::Locked) => {
                     if !key_mismatch_reported {
                         eprintln!("[pinchy] item {} is sealed with another key", change.id);
@@ -1576,6 +1586,9 @@ fn pull_loop(app: AppHandle, dirs: Dirs) {
         }
         if changed {
             let _ = app.emit(CHANGED_EVENT, ());
+        }
+        if let Some(id) = newest {
+            put_on_clipboard(&app, &db, id);
         }
         match stopped {
             Some((seq, message)) => {
@@ -1601,6 +1614,22 @@ fn pull_loop(app: AppHandle, dirs: Dirs) {
             refresh_connected(&app, &relay);
         }
     }
+}
+
+/// Puts an item another device just copied onto this device's clipboard,
+/// so it can be pasted right away without opening the panel.
+fn put_on_clipboard(app: &AppHandle, db: &Db, sync_id: &str) {
+    let Ok(Some(item)) = db.get_by_sync_id(sync_id) else { return };
+    if item.concealed || crate::db::now_ms() - item.created_at > FRESH_MS {
+        return;
+    }
+    let Some(hash) = db.hash_of(item.id) else { return };
+    let _ = app.run_on_main_thread(move || {
+        clipboard::expect_own_write(&item.kind, &hash);
+        if let Err(e) = crate::paste::copy_to_clipboard(&item) {
+            eprintln!("[pinchy] putting a received item on the clipboard failed: {e}");
+        }
+    });
 }
 
 /// Applies one change. Returns whether the visible history changed.

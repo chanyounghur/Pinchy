@@ -8,9 +8,11 @@ use clipboard_rs::{
     ContentFormat,
 };
 use clipboard_rs::common::RustImage;
+use image::DynamicImage;
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, Manager};
 
 pub const CHANGED_EVENT: &str = "clipboard-changed";
@@ -18,6 +20,32 @@ pub const PREVIEW_LEN: usize = 300;
 /// Pasteboard types password managers add so clipboard tools leave the copy
 /// alone: macOS's shared convention and Windows' documented flag.
 const CONCEALED_FORMATS: [&str; 2] = ["org.nspasteboard.ConcealedType", "ExcludeClipboardContentFromMonitorProcessing"];
+
+/// A write Pinchy made itself that the watcher should not record again:
+/// the kind and hash it expects back, and until when.
+static OWN_WRITE: Mutex<Option<(String, String, Instant)>> = Mutex::new(None);
+const OWN_WRITE_WINDOW: Duration = Duration::from_secs(2);
+
+/// Marks the next clipboard change of this item as Pinchy's own, so it is
+/// neither re-recorded nor pushed back to the other devices.
+pub fn expect_own_write(kind: &str, hash: &str) {
+    *OWN_WRITE.lock().unwrap() = Some((kind.to_string(), hash.to_string(), Instant::now() + OWN_WRITE_WINDOW));
+}
+
+/// Whether this change is the write `expect_own_write` announced.
+fn is_own_write(item: &NewItem) -> bool {
+    let mut own = OWN_WRITE.lock().unwrap();
+    let Some((kind, hash, until)) = own.as_ref() else { return false };
+    if Instant::now() > *until {
+        *own = None;
+        return false;
+    }
+    let matches = *kind == item.kind && *hash == item.hash;
+    if matches {
+        *own = None;
+    }
+    matches
+}
 
 struct Handler {
     app: AppHandle,
@@ -38,6 +66,9 @@ impl ClipboardHandler for Handler {
         let db = app.state::<Db>();
         let _files = db.1.lock().unwrap();
         if let Some(item) = self.read_item() {
+            if is_own_write(&item) {
+                return;
+            }
             match db.upsert(item) {
                 Ok(_) => {
                     let _ = self.app.emit(CHANGED_EVENT, ());
@@ -110,14 +141,36 @@ impl Handler {
     fn image_item(&self, img: clipboard_rs::RustImageData) -> Option<NewItem> {
         let png = img.to_png().ok()?;
         let (w, h) = img.get_size();
-        png_item(&self.images_dir, png.get_bytes(), w, h)
+        let hash = pixel_hash(&img.get_dynamic_image().ok()?);
+        png_item(&self.images_dir, png.get_bytes(), w, h, hash)
     }
 }
 
-/// Stores PNG bytes in the image cache, named by content hash.
-pub fn png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32) -> Option<NewItem> {
-    let hash = sha256(bytes);
-    let path = images_dir.join(format!("{hash}.png"));
+/// Identifies an image by its pixels rather than its file bytes, so the
+/// same picture matches whichever encoder last wrote it: a phone, another
+/// app, or Pinchy's own paste, which writes the image back re-encoded.
+pub fn pixel_hash(img: &DynamicImage) -> String {
+    let mut h = Sha256::new();
+    h.update(b"rgba8");
+    h.update(img.width().to_le_bytes());
+    h.update(img.height().to_le_bytes());
+    match img.as_rgba8() {
+        Some(pixels) => h.update(pixels.as_raw()),
+        None => h.update(img.to_rgba8().as_raw()),
+    }
+    format!("{:x}", h.finalize())
+}
+
+/// A PNG another device sent, keyed by its pixels like a local copy.
+pub fn received_png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32) -> Option<NewItem> {
+    let img = image::load_from_memory_with_format(bytes, image::ImageFormat::Png).ok()?;
+    png_item(images_dir, bytes, w, h, pixel_hash(&img))
+}
+
+/// Stores PNG bytes in the image cache, named by their own hash; `hash`
+/// is the item's identity, from `pixel_hash`.
+fn png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32, hash: String) -> Option<NewItem> {
+    let path = images_dir.join(format!("{}.png", sha256(bytes)));
     if !path.exists() {
         std::fs::write(&path, bytes).ok()?;
     }
@@ -210,6 +263,27 @@ fn files_item(files: Vec<String>) -> NewItem {
     }
 }
 
+const IMAGE_HASH_KEY: &str = "image_hash";
+const IMAGE_HASH_PIXELS: &str = "pixels";
+
+/// Images saved before `pixel_hash` are keyed by their file bytes; key them
+/// by pixels once. A row whose picture another row already has keeps its old
+/// key, since only one row may hold a key.
+fn rehash_images(app: &AppHandle) {
+    let db = app.state::<Db>();
+    if db.sync_value(IMAGE_HASH_KEY).ok().flatten().as_deref() == Some(IMAGE_HASH_PIXELS) {
+        return;
+    }
+    let Ok(images) = db.image_rows() else { return };
+    for (id, path) in images {
+        let Ok(img) = image::open(&path) else { continue };
+        let hash = pixel_hash(&img);
+        let _files = db.1.lock().unwrap();
+        let _ = db.set_hash(id, &hash);
+    }
+    let _ = db.set_sync_value(IMAGE_HASH_KEY, Some(IMAGE_HASH_PIXELS));
+}
+
 /// Rows saved before icons existed only have the app name; resolve what we can.
 fn backfill_icons(app: &AppHandle, icons: &mut AppIconCache) {
     let db = app.state::<Db>();
@@ -252,10 +326,50 @@ pub fn start(app: AppHandle, images_dir: PathBuf, icons_dir: PathBuf) {
                     return;
                 }
             };
+            rehash_images(&app);
             let mut icons = AppIconCache::new(icons_dir);
             backfill_icons(&app, &mut icons);
             watcher.add_handler(Handler { app, ctx, images_dir, icons });
             watcher.start_watch();
         })
         .expect("spawn clipboard watcher");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use image::codecs::png::{CompressionType, FilterType, PngEncoder};
+    use image::{Rgba, RgbaImage};
+
+    fn encode(img: &DynamicImage, compression: CompressionType, filter: FilterType) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        img.write_with_encoder(PngEncoder::new_with_quality(&mut bytes, compression, filter)).unwrap();
+        bytes
+    }
+
+    #[test]
+    fn images_match_by_pixels_whatever_the_encoding() {
+        let pixels = RgbaImage::from_fn(5, 3, |x, y| Rgba([x as u8 * 40, y as u8 * 80, 7, if x == 0 { 128 } else { 255 }]));
+        let img = DynamicImage::ImageRgba8(pixels);
+        let fast = encode(&img, CompressionType::Fast, FilterType::NoFilter);
+        let best = encode(&img, CompressionType::Best, FilterType::Adaptive);
+        assert_ne!(fast, best);
+        let dir = std::env::temp_dir().join(format!("pinchy-pixels-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let a = received_png_item(&dir, &fast, 5, 3).unwrap();
+        let b = received_png_item(&dir, &best, 5, 3).unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(a.hash, b.hash);
+        assert_eq!(a.hash, pixel_hash(&img));
+        assert_ne!(a.content, b.content);
+    }
+
+    #[test]
+    fn opaque_rgb_and_rgba_of_the_same_picture_match() {
+        let rgba = DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, Rgba([1, 2, 3, 255])));
+        let rgb = DynamicImage::ImageRgb8(rgba.to_rgb8());
+        assert_eq!(pixel_hash(&rgba), pixel_hash(&rgb));
+        let other = DynamicImage::ImageRgba8(RgbaImage::from_pixel(1, 4, Rgba([1, 2, 3, 255])));
+        assert_ne!(pixel_hash(&rgba), pixel_hash(&other));
+    }
 }
