@@ -1925,7 +1925,7 @@ mod tests {
         Item {
             id: 1, kind: kind.into(), content: content.into(), preview: String::new(), source_app: None,
             app_icon: None, app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None,
-            og_image: None, origin_device: None, sync_id: crate::db::new_sync_id(), concealed,
+            og_image: None, og_icon: None, origin_device: None, sync_id: crate::db::new_sync_id(), concealed,
         }
     }
 

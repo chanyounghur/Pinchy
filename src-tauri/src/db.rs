@@ -18,6 +18,8 @@ pub struct Item {
     pub created_at: i64,
     pub og_title: Option<String>,
     pub og_image: Option<String>,
+    /// The site's icon, kept when the page has no cover image.
+    pub og_icon: Option<String>,
     /// Name of the device this item was first copied on, when not this one.
     pub origin_device: Option<String>,
     /// Id shared with the other devices; every row has one.
@@ -75,7 +77,7 @@ impl Op {
 }
 
 const COLUMNS: &str =
-    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image, origin_device, sync_id, concealed";
+    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image, origin_device, sync_id, concealed, og_icon";
 
 fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -95,6 +97,7 @@ fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
         origin_device: r.get(13)?,
         sync_id: r.get(14)?,
         concealed: r.get::<_, Option<bool>>(15)?.unwrap_or(false),
+        og_icon: r.get(16)?,
     })
 }
 
@@ -139,6 +142,7 @@ impl Db {
             ("origin_device", "TEXT"),
             ("sync_id", "TEXT"),
             ("concealed", "INTEGER"),
+            ("og_icon", "TEXT"),
         ] {
             let exists: bool = conn
                 .prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = ?1")?
@@ -517,21 +521,29 @@ impl Db {
     }
 
     /// Keep the existence check and file write under the same lock as deletion.
-    pub fn save_link_preview(&self, item: &Item, title: Option<&str>, image: Option<(&Path, &[u8])>) -> Result<(), String> {
+    pub fn save_link_preview(
+        &self,
+        item: &Item,
+        title: Option<&str>,
+        image: Option<(&Path, &[u8])>,
+        icon: Option<(&Path, &[u8])>,
+    ) -> Result<(), String> {
         let _files = self.1.lock().unwrap();
         let conn = self.0.lock().unwrap();
         let exists = conn.prepare("SELECT 1 FROM items WHERE id = ?1 AND content = ?2")
             .and_then(|mut s| s.exists(params![item.id, item.content])).map_err(|e| e.to_string())?;
         if !exists { return Ok(()); }
-        let image_path = image.and_then(|(path, bytes)| {
-            std::fs::write(path, bytes).ok().map(|_| path.to_string_lossy().into_owned())
-        });
+        let write = |file: Option<(&Path, &[u8])>| {
+            file.and_then(|(path, bytes)| std::fs::write(path, bytes).ok().map(|_| path.to_string_lossy().into_owned()))
+        };
+        let image_path = write(image);
+        let icon_path = write(icon);
         let result = conn.execute(
-            "UPDATE items SET og_title = ?1, og_image = ?2, og_checked = ?3 WHERE id = ?4",
-            params![title, image_path, now_ms(), item.id],
+            "UPDATE items SET og_title = ?1, og_image = ?2, og_icon = ?3, og_checked = ?4 WHERE id = ?5",
+            params![title, image_path, icon_path, now_ms(), item.id],
         );
         if result.is_err() {
-            if let Some(path) = image_path { let _ = std::fs::remove_file(path); }
+            for path in image_path.into_iter().chain(icon_path) { let _ = std::fs::remove_file(path); }
         }
         result.map(|_| ()).map_err(|e| e.to_string())
     }
@@ -575,7 +587,7 @@ mod tests {
             let db = Db::open(&path).unwrap();
             db.upsert(link()).unwrap();
             let item = db.pending_link().unwrap().unwrap();
-            db.save_link_preview(&item, Some("Saved title"), Some((&image, b"cached image"))).unwrap();
+            db.save_link_preview(&item, Some("Saved title"), Some((&image, b"cached image")), None).unwrap();
         }
         {
             let db = Db::open(&path).unwrap();
@@ -699,10 +711,10 @@ mod tests {
         let db = Db::open(Path::new(":memory:")).unwrap();
         db.upsert(link()).unwrap();
         let item = db.pending_link().unwrap().unwrap();
-        db.save_link_preview(&item, None, None).unwrap();
+        db.save_link_preview(&item, None, None, None).unwrap();
         assert!(db.pending_link().unwrap().is_none());
         db.delete(item.id).unwrap();
-        db.save_link_preview(&item, Some("Late response"), None).unwrap();
+        db.save_link_preview(&item, Some("Late response"), None, None).unwrap();
         assert!(db.list("", 10).unwrap().is_empty());
     }
 }

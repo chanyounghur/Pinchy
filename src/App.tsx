@@ -17,6 +17,7 @@ type Item = {
   created_at: number;
   og_title: string | null;
   og_image: string | null;
+  og_icon?: string | null;
   origin_device: string | null;
   sync_id: string;
   concealed: boolean;
@@ -52,12 +53,17 @@ function linkDomain(url: string) {
 
 function LinkPreview({ item }: { item: Item }) {
   const [failedImage, setFailedImage] = useState<string | null>(null);
+  const [failedIcon, setFailedIcon] = useState<string | null>(null);
   const hasImage = item.og_image && failedImage !== item.og_image;
+  const hasIcon = item.og_icon && failedIcon !== item.og_icon;
   return (
     <div className={`link-preview ${hasImage ? "with-image" : "without-image"}`}>
       {hasImage ? (
         <img className="link-cover" src={convertFileSrc(item.og_image!)} alt="" draggable={false}
           onError={() => setFailedImage(item.og_image)} />
+      ) : hasIcon ? (
+        <img className="link-placeholder link-icon" src={convertFileSrc(item.og_icon!)} alt="" draggable={false}
+          onError={() => setFailedIcon(item.og_icon ?? null)} />
       ) : <div className="link-placeholder" aria-hidden="true">↗</div>}
       <div className="link-meta">
         <div className="link-domain">{linkDomain(item.content)}</div>

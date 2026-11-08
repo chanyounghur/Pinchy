@@ -176,6 +176,7 @@ struct StoredItem {
     record_bytes: u64,
     image: Option<String>,
     og_image: Option<String>,
+    og_icon: Option<String>,
     app_icon: Option<String>,
     /// Paths of a `files` entry; received ones live in our own folder.
     files: Vec<String>,
@@ -188,7 +189,7 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
             "SELECT id, created_at, CASE WHEN kind = 'image' THEN content END, og_image, app_icon,
          length(CAST(content AS BLOB)) + length(CAST(preview AS BLOB)) + length(hash)
          + length(CAST(COALESCE(og_title, '') AS BLOB)) + 128,
-         CASE WHEN kind = 'files' THEN content END
+         CASE WHEN kind = 'files' THEN content END, og_icon
          FROM items ORDER BY created_at ASC, id ASC",
         )
         .map_err(|e| e.to_string())?;
@@ -202,6 +203,7 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
                 app_icon: row.get(4)?,
                 record_bytes: row.get::<_, i64>(5)? as u64,
                 files: row.get::<_, Option<String>>(6)?.as_deref().map(listed_files).unwrap_or_default(),
+                og_icon: row.get(7)?,
             })
         })
         .map_err(|e| e.to_string())?;
@@ -250,7 +252,8 @@ fn remove_item_images(conn: &Connection, item: &Item) {
         return;
     };
     let Ok(mut statement) = conn.prepare(
-        "SELECT content FROM items WHERE kind = 'image' UNION SELECT og_image FROM items WHERE og_image IS NOT NULL"
+        "SELECT content FROM items WHERE kind = 'image' UNION SELECT og_image FROM items WHERE og_image IS NOT NULL
+         UNION SELECT og_icon FROM items WHERE og_icon IS NOT NULL"
     ) else { return };
     let Ok(paths) = statement.query_map([], |row| row.get::<_, String>(0)) else {
         return;
@@ -269,6 +272,7 @@ fn remove_item_images(conn: &Connection, item: &Item) {
     for path in item
         .og_image
         .iter()
+        .chain(&item.og_icon)
         .map(String::as_str)
         .chain((item.kind == "image").then_some(item.content.as_str()))
     {
@@ -292,6 +296,7 @@ fn clean_unused(conn: &Connection, remaining: &[StoredItem]) -> Result<(), Strin
             .image
             .iter()
             .chain(&item.og_image)
+            .chain(&item.og_icon)
             .chain(&item.app_icon)
         {
             // SQLite resolves directory aliases (e.g. /var -> /private/var
@@ -384,6 +389,7 @@ fn enforce(conn: &mut Connection, policy: &Retention, now: i64) -> Result<Cleanu
                 for path in item
                     .og_image
                     .iter()
+                    .chain(&item.og_icon)
                     .map(String::as_str)
                     .chain(item.image.iter().map(String::as_str))
                     .chain(item.files.iter().map(String::as_str).filter(|p| Path::new(p).starts_with(&received)))

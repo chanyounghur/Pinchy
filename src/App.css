@@ -282,6 +282,7 @@ body,
   display: grid; place-items: center; border-radius: 10px;
   background: var(--chip); color: var(--card-muted); font-size: 22px;
 }
+.card-body .link-icon { width: 36px; height: 36px; object-fit: cover; border-radius: 10px; }
 .without-image .link-title { -webkit-line-clamp: 4; }
 .kind-link .card-foot { justify-content: space-between; font-size: 11px; }
 .kind-link .card-foot > span:first-child {
