@@ -1,7 +1,7 @@
 import { useLocalSearchParams, useRouter } from "expo-router";
 import * as Haptics from "expo-haptics";
 import React, { useCallback, useState } from "react";
-import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
+import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useItemActions } from "@/actions";
 import { useApp, useItem } from "@/app-context";
@@ -54,19 +54,8 @@ export default function Detail() {
   }, [item, toast]);
 
   const remove = useCallback(() => {
-    if (!engine || !item) return;
-    Alert.alert("모든 기기에서 지울까요?", "연결된 모든 기기의 히스토리에서 사라지고, 되돌릴 수 없어요.", [
-      { text: "닫기", style: "cancel" },
-      {
-        text: "지우기",
-        style: "destructive",
-        onPress: () => {
-          router.back();
-          engine.deleteItem(item.id).catch((e: unknown) => toast(e instanceof Error ? e.message : "지우지 못했어요"));
-        },
-      },
-    ]);
-  }, [engine, item, router, toast]);
+    if (item) actions.remove(item, () => router.back());
+  }, [actions, item, router]);
 
   if (item === undefined) return <View style={{ flex: 1, backgroundColor: t.bg }} />;
   if (item === null) {

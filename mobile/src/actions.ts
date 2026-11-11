@@ -1,9 +1,11 @@
 // What a card's buttons do, shared by the history and the detail screen:
-// save (album, folder or share sheet), copy to the clipboard, and share.
-// Each one fetches the blob first when it is not here yet.
+// save (album, folder or share sheet), copy to the clipboard, share, open a
+// link in the browser, and delete everywhere after asking.
+// Each one that needs the blob fetches it first when it is not here yet.
 
 import * as Haptics from "expo-haptics";
 import { useCallback } from "react";
+import { Alert, Linking } from "react-native";
 import { useApp } from "./app-context";
 import { copyAny, saveItem, shareItem } from "./clipboard";
 import type { Item } from "./store/db";
@@ -13,6 +15,10 @@ export interface ItemActions {
   copy(item: Item): Promise<void>;
   save(item: Item): Promise<void>;
   share(item: Item): Promise<void>;
+  open(item: Item): Promise<void>;
+  /// Asks first, then deletes the item on every device. `before` runs once
+  /// the user agrees, before the delete starts (the detail screen goes back).
+  remove(item: Item, before?: () => void): void;
 }
 
 export function useItemActions(): ItemActions {
@@ -77,5 +83,36 @@ export function useItemActions(): ItemActions {
     [withBlob, toast],
   );
 
-  return { copy, save, share };
+  const open = useCallback(
+    async (item: Item) => {
+      const url = item.text?.trim();
+      if (!url) return;
+      try {
+        await Linking.openURL(url);
+      } catch {
+        toast("링크를 열지 못했어요");
+      }
+    },
+    [toast],
+  );
+
+  const remove = useCallback(
+    (item: Item, before?: () => void) => {
+      if (!engine) return;
+      Alert.alert("모든 기기에서 지울까요?", "연결된 모든 기기의 히스토리에서 사라지고, 되돌릴 수 없어요.", [
+        { text: "닫기", style: "cancel" },
+        {
+          text: "지우기",
+          style: "destructive",
+          onPress: () => {
+            before?.();
+            engine.deleteItem(item.id).catch((e: unknown) => toast(e instanceof Error ? e.message : "지우지 못했어요"));
+          },
+        },
+      ]);
+    },
+    [engine, toast],
+  );
+
+  return { copy, save, share, open, remove };
 }

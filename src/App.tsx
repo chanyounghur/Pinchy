@@ -23,6 +23,8 @@ type Item = {
   concealed: boolean;
 };
 
+const IS_MAC = /Mac/i.test(navigator.platform);
+
 const KIND_LABEL: Record<Item["kind"], string> = {
   text: "텍스트",
   link: "링크",
@@ -96,6 +98,10 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  // The right-click menu: which card and where the pointer was.
+  const [menu, setMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
+  const menuOpenRef = useRef(false);
+  menuOpenRef.current = menu !== null;
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const pointerRef = useRef<{ x: number; y: number } | null>(null);
@@ -140,7 +146,7 @@ export default function App() {
         ? requestAnimationFrame(tick) : 0;
     };
     const move = (e: PointerEvent) => {
-      if (e.pointerType !== "mouse") return;
+      if (e.pointerType !== "mouse" || menuOpenRef.current) return;
       if (lastPointer?.x === e.clientX && lastPointer.y === e.clientY) return;
       lastPointer = { x: e.clientX, y: e.clientY };
       selectionScrollerRef.current?.stop();
@@ -206,6 +212,7 @@ export default function App() {
       listen("clipboard-changed", () => refresh(query)),
       listen("panel-shown", () => {
         stopScrollingRef.current();
+        setMenu(null);
         revealSelectionRef.current = true;
         setQuery("");
         setSelected(0);
@@ -255,6 +262,21 @@ export default function App() {
   const copy = (item: Item | undefined) => item && invoke("copy_item", { id: item.id });
   const remove = (item: Item | undefined) => item && invoke("delete_item", { id: item.id });
 
+  // Any click, scroll or blur outside the menu dismisses it.
+  useEffect(() => {
+    if (!menu) return;
+    const dismiss = () => setMenu(null);
+    const list = listRef.current;
+    window.addEventListener("pointerdown", dismiss);
+    window.addEventListener("blur", dismiss);
+    list?.addEventListener("scroll", dismiss);
+    return () => {
+      window.removeEventListener("pointerdown", dismiss);
+      window.removeEventListener("blur", dismiss);
+      list?.removeEventListener("scroll", dismiss);
+    };
+  }, [menu]);
+
   const onKeyDown = (e: React.KeyboardEvent) => {
     revealSelectionRef.current = true;
     const mod = e.metaKey || e.ctrlKey;
@@ -262,6 +284,14 @@ export default function App() {
       e.preventDefault();
       paste(items[Number(e.key) - 1]);
       return;
+    }
+    if (menu) {
+      setMenu(null);
+      // Escape closes only the menu, not the panel.
+      if (e.key === "Escape") {
+        e.preventDefault();
+        return;
+      }
     }
     switch (e.key) {
       case "Escape":
@@ -337,6 +367,12 @@ export default function App() {
               }
             }}
             onClick={() => paste(item)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              stopScrollingRef.current();
+              setSelected(i);
+              setMenu({ item, x: e.clientX, y: e.clientY });
+            }}
             title={item.source_app ?? undefined}
           >
             <div className="card-head" style={{ background: item.app_color ?? "#8e8e93" }}>
@@ -375,6 +411,29 @@ export default function App() {
           </div>
         ))}
       </div>
+
+      {menu && (
+        <div
+          className="context-menu"
+          role="menu"
+          style={{ left: Math.min(menu.x, window.innerWidth - 168), top: Math.min(menu.y, window.innerHeight - 48) }}
+          onPointerDown={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            type="button"
+            role="menuitem"
+            className="danger"
+            onClick={() => {
+              remove(menu.item);
+              setMenu(null);
+            }}
+          >
+            삭제
+            <span className="shortcut">{IS_MAC ? "⌘⌫" : "Ctrl+⌫"}</span>
+          </button>
+        </div>
+      )}
     </div>
   );
 }

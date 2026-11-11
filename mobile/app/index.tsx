@@ -1,13 +1,17 @@
 // The history: every device's clipboard, newest first. Tap copies to this
-// phone; long press opens the item.
+// phone (a link opens in the browser instead); long press offers to open the
+// item or delete it.
 
+import * as Haptics from "expo-haptics";
 import { useShareIntentContext } from "expo-share-intent";
 import { Redirect, useRouter } from "expo-router";
 import React, { useCallback, useEffect, useState } from "react";
-import { ActivityIndicator, FlatList, Image, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
+import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, Image, Platform, Pressable, RefreshControl, StyleSheet, Text, TextInput, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useItemActions } from "@/actions";
 import { useApp, useItems } from "@/app-context";
+import type { Item } from "@/store/db";
+import { kindLabel } from "@/ui/format";
 import { ItemCard } from "@/ui/ItemCard";
 import { useTheme } from "@/ui/theme";
 import { useToast } from "@/ui/Toast";
@@ -32,6 +36,30 @@ export default function History() {
   }, [updateReady, toast]);
 
   const actions = useItemActions();
+
+  const tap = (item: Item) => {
+    if (item.kind === "files") router.push(`/item/${item.id}`);
+    else if (item.kind === "link") void actions.open(item);
+    else void actions.copy(item);
+  };
+
+  const menu = (item: Item) => {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const detail = () => router.push(`/item/${item.id}`);
+    const remove = () => actions.remove(item);
+    if (Platform.OS === "ios") {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ["자세히 보기", "모든 기기에서 지우기", "닫기"], destructiveButtonIndex: 1, cancelButtonIndex: 2 },
+        (i) => (i === 0 ? detail() : i === 1 ? remove() : undefined),
+      );
+    } else {
+      Alert.alert(kindLabel(item.kind, item.files), undefined, [
+        { text: "닫기", style: "cancel" },
+        { text: "자세히 보기", onPress: detail },
+        { text: "지우기", style: "destructive", onPress: remove },
+      ], { cancelable: true });
+    }
+  };
 
   const onRefresh = useCallback(() => {
     setRefreshing(true);
@@ -99,8 +127,8 @@ export default function History() {
         renderItem={({ item }) => (
           <ItemCard
             item={item}
-            onPress={() => (item.kind === "files" ? router.push(`/item/${item.id}`) : void actions.copy(item))}
-            onLongPress={() => router.push(`/item/${item.id}`)}
+            onPress={() => tap(item)}
+            onLongPress={() => menu(item)}
             onOpenPicture={(i) => router.push(`/view/${item.id}?index=${i}`)}
             actions={{ onSave: () => void actions.save(item), onCopy: () => void actions.copy(item), onShare: () => void actions.share(item) }}
           />
