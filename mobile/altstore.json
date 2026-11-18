@@ -18,6 +18,15 @@
       "screenshots": [],
       "versions": [
         {
+          "version": "1.3.1",
+          "buildVersion": "10301",
+          "date": "2026-11-18T23:31:49Z",
+          "localizedDescription": "Pinchy 1.3.1. 변경 내용: https://github.com/chanyounghur/Pinchy/releases/tag/mobile-v1.3.1",
+          "downloadURL": "https://github.com/chanyounghur/Pinchy/releases/download/mobile-v1.3.1/Pinchy-1.3.1.ipa",
+          "size": 15752896,
+          "minOSVersion": "16.4"
+        },
+        {
           "version": "1.2.4",
           "buildVersion": "10204",
           "date": "2026-11-11T06:40:35Z",
@@ -96,15 +105,6 @@
           "localizedDescription": "Pinchy 1.0.2. 변경 내용: https://github.com/chanyounghur/Pinchy/releases/tag/mobile-v1.0.2",
           "downloadURL": "https://github.com/chanyounghur/Pinchy/releases/download/mobile-v1.0.2/Pinchy-1.0.2.ipa",
           "size": 14792947,
-          "minOSVersion": "16.4"
-        },
-        {
-          "version": "1.0.1",
-          "buildVersion": "10001",
-          "date": "2026-10-26T18:27:44Z",
-          "localizedDescription": "Pinchy 1.0.1. 변경 내용: https://github.com/chanyounghur/Pinchy/releases/tag/mobile-v1.0.1",
-          "downloadURL": "https://github.com/chanyounghur/Pinchy/releases/download/mobile-v1.0.1/Pinchy-1.0.1.ipa",
-          "size": 15248000,
           "minOSVersion": "16.4"
         }
       ],
