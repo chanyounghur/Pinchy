@@ -19,6 +19,23 @@ test("meta round-trips and drops unknown or malformed fields", () => {
   assert.equal(decodeMeta(new TextEncoder().encode('{"v":2,"kind":"files","files":[{"name":1}]}')), null);
   const extra = decodeMeta(new TextEncoder().encode('{"v":3,"kind":"text","text":"x","future":true}'));
   assert.deepEqual(extra, { v: 3, kind: "text", text: "x" });
+
+  const imgMeta = {
+    v: 3,
+    kind: "image",
+    width: 1920,
+    height: 1080,
+    thumb: png,
+  };
+  assert.deepEqual(decodeMeta(encodeMeta(imgMeta)), imgMeta);
+  assert.equal(decodeMeta(new TextEncoder().encode('{"v":3,"kind":"image","width":0,"height":-5}'))?.width, undefined, "positive dims only");
+  assert.equal(decodeMeta(new TextEncoder().encode('{"v":3,"kind":"image","height":1.5}'))?.height, undefined, "integer dims only");
+  assert.equal(decodeMeta(new TextEncoder().encode('{"v":3,"kind":"image","thumb":"R0lGODlh"}'))?.thumb, undefined, "PNG thumbs only");
+  assert.equal(
+    decodeMeta(new TextEncoder().encode(`{"v":3,"kind":"image","thumb":"${"iVBORw0KGgo" + "A".repeat(350_000)}"}`))?.thumb,
+    undefined,
+    "small thumbs only",
+  );
 });
 
 test("files blobs split by the declared sizes", () => {

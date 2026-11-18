@@ -23,12 +23,12 @@ let mockDevices = [
 ];
 
 const MOCK_ITEMS = [
-  { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "1Password", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000, concealed: true },
-  { id: 2, kind: "text", content: "", preview: "회사에서 복사한 메모", source_app: "Notes", app_icon: null, app_color: "#c64735", width: null, height: null, size: 9, created_at: Date.now() - 1_080_000, origin_device: "회사 맥" },
-  { id: 3, kind: "link", content: "https://tauri.app/develop/", preview: "https://tauri.app/develop/", og_title: "Tauri — Build smaller, faster desktop apps", og_image: "/brand/pinchy-wordmark.png", source_app: "Safari", app_icon: null, app_color: "#1f8fff", width: null, height: null, size: 26, created_at: Date.now() - 1_620_000 },
-  { id: 6, kind: "link", content: "https://example.com/notes", preview: "https://example.com/notes", og_title: null, og_image: null, source_app: "Chrome", app_icon: null, app_color: "#788fbc", width: null, height: null, size: 25, created_at: Date.now() - 1_800_000 },
-  { id: 4, kind: "files", content: "", preview: "report.pdf\nscreenshot.png", source_app: "Finder", app_icon: null, app_color: "#3b82f6", width: null, height: null, size: 2, created_at: Date.now() - 7_200_000 },
-  { id: 5, kind: "text", content: "", preview: "회의록 초안입니다. 다음 주 월요일까지 검토 부탁드려요. 특히 3번 항목 일정이 빠듯합니다.", source_app: "Notes", app_icon: null, app_color: "#f5b400", width: null, height: null, size: 31, created_at: Date.now() - 86_400_000 },
+  { id: 1, kind: "text", content: "", preview: "abc123!@#", source_app: "1Password", app_icon: null, app_color: "#8e8e8e", width: null, height: null, size: 9, created_at: Date.now() - 300_000, concealed: true, blob_pending: false, blob_size: null, files_meta: null },
+  { id: 2, kind: "text", content: "", preview: "회사에서 복사한 메모", source_app: "Notes", app_icon: null, app_color: "#c64735", width: null, height: null, size: 9, created_at: Date.now() - 1_080_000, origin_device: "회사 맥", blob_pending: false, blob_size: null, files_meta: null },
+  { id: 3, kind: "link", content: "https://tauri.app/develop/", preview: "https://tauri.app/develop/", og_title: "Tauri — Build smaller, faster desktop apps", og_image: "/brand/pinchy-wordmark.png", source_app: "Safari", app_icon: null, app_color: "#1f8fff", width: null, height: null, size: 26, created_at: Date.now() - 1_620_000, blob_pending: false, blob_size: null, files_meta: null },
+  { id: 6, kind: "link", content: "https://example.com/notes", preview: "https://example.com/notes", og_title: null, og_image: null, source_app: "Chrome", app_icon: null, app_color: "#788fbc", width: null, height: null, size: 25, created_at: Date.now() - 1_800_000, blob_pending: false, blob_size: null, files_meta: null },
+  { id: 4, kind: "files", content: "", preview: "report.pdf\nscreenshot.png", source_app: "Finder", app_icon: null, app_color: "#3b82f6", width: null, height: null, size: 2, created_at: Date.now() - 7_200_000, origin_device: "회사 맥", blob_pending: true, blob_size: 35_861_299, files_meta: JSON.stringify([{ name: "report.pdf", size: 12_400_000 }, { name: "demo_video.mp4", size: 23_461_299 }]) },
+  { id: 5, kind: "text", content: "", preview: "회의록 초안입니다. 다음 주 월요일까지 검토 부탁드려요. 특히 3번 항목 일정이 빠듯합니다.", source_app: "Notes", app_icon: null, app_color: "#f5b400", width: null, height: null, size: 31, created_at: Date.now() - 86_400_000, blob_pending: false, blob_size: null, files_meta: null },
 ];
 
 // A longer browser-only sample list for trying held-arrow navigation locally.

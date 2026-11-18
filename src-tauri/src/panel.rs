@@ -80,6 +80,7 @@ pub fn hide(app: &AppHandle) {
         if !was_open {
             return;
         }
+        app.state::<crate::share::ShareState>().stop_download();
         *state.closed_at.lock().unwrap() = Some(Instant::now());
         let restore_focus = platform::is_self_active();
         if let Some(h) = window(&app).and_then(|w| platform::handle(&w)) {

@@ -25,10 +25,19 @@ export interface Meta {
   /// The app's icon as a base64 PNG (64px), so this device can show it
   /// without having the app.
   icon?: string;
+  /// Image dimensions in pixels, so deferred images know their aspect ratio.
+  width?: number;
+  height?: number;
+  /// Small base64 PNG preview attached when an image exceeds `AUTO_DOWNLOAD_BYTES`.
+  thumb?: string;
 }
 
+/// Blobs up to 5MB are downloaded automatically; larger ones wait until opened/saved/copied.
+export const AUTO_DOWNLOAD_BYTES = 5 * 1024 * 1024;
 /// A 64px PNG is a few KB; anything bigger is not an icon.
 export const MAX_ICON_CHARS = 64 * 1024 * 4 / 3 + 4;
+/// A 240px mini-thumbnail PNG must stay compact inside the envelope.
+export const MAX_THUMB_CHARS = 256 * 1024 * 4 / 3 + 4;
 
 export const META_VERSION = 2;
 
@@ -44,6 +53,9 @@ export function encodeMeta(meta: Meta): Uint8Array {
   if (meta.copied_at !== undefined) clean.copied_at = meta.copied_at;
   if (meta.color !== undefined) clean.color = meta.color;
   if (meta.icon !== undefined) clean.icon = meta.icon;
+  if (meta.width !== undefined) clean.width = meta.width;
+  if (meta.height !== undefined) clean.height = meta.height;
+  if (meta.thumb !== undefined) clean.thumb = meta.thumb;
   return encoder.encode(JSON.stringify(clean));
 }
 
@@ -75,6 +87,9 @@ export function decodeMeta(bytes: Uint8Array): Meta | null {
   if (typeof r.copied_at === "number") meta.copied_at = r.copied_at;
   if (typeof r.color === "string" && HEX_COLOR.test(r.color.trim())) meta.color = r.color.trim().toLowerCase();
   if (typeof r.icon === "string" && r.icon.length <= MAX_ICON_CHARS && PNG_BASE64.test(r.icon)) meta.icon = r.icon;
+  if (typeof r.width === "number" && Number.isInteger(r.width) && r.width > 0) meta.width = r.width;
+  if (typeof r.height === "number" && Number.isInteger(r.height) && r.height > 0) meta.height = r.height;
+  if (typeof r.thumb === "string" && r.thumb.length <= MAX_THUMB_CHARS && PNG_BASE64.test(r.thumb)) meta.thumb = r.thumb;
   return meta;
 }
 

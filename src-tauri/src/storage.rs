@@ -186,7 +186,7 @@ fn items(conn: &Connection) -> Result<Vec<StoredItem>, String> {
     // Do not load all copied text into memory during each maintenance pass.
     let mut statement = conn
         .prepare(
-            "SELECT id, created_at, CASE WHEN kind = 'image' THEN content END, og_image, app_icon,
+            "SELECT id, created_at, CASE WHEN kind = 'image' AND content != '' THEN content END, og_image, app_icon,
          length(CAST(content AS BLOB)) + length(CAST(preview AS BLOB)) + length(hash)
          + length(CAST(COALESCE(og_title, '') AS BLOB)) + 128,
          CASE WHEN kind = 'files' THEN content END, og_icon
@@ -252,7 +252,7 @@ fn remove_item_images(conn: &Connection, item: &Item) {
         return;
     };
     let Ok(mut statement) = conn.prepare(
-        "SELECT content FROM items WHERE kind = 'image' UNION SELECT og_image FROM items WHERE og_image IS NOT NULL
+        "SELECT content FROM items WHERE kind = 'image' AND content != '' UNION SELECT og_image FROM items WHERE og_image IS NOT NULL
          UNION SELECT og_icon FROM items WHERE og_icon IS NOT NULL"
     ) else { return };
     let Ok(paths) = statement.query_map([], |row| row.get::<_, String>(0)) else {
@@ -274,7 +274,7 @@ fn remove_item_images(conn: &Connection, item: &Item) {
         .iter()
         .chain(&item.og_icon)
         .map(String::as_str)
-        .chain((item.kind == "image").then_some(item.content.as_str()))
+        .chain((item.kind == "image" && !item.content.is_empty()).then_some(item.content.as_str()))
     {
         let path = Path::new(path);
         let Ok(canonical) = std::fs::canonicalize(path) else {
@@ -521,6 +521,9 @@ mod tests {
                     size: image_bytes as i64,
                     origin_device: None,
                     concealed: false,
+                    blob_pending: false,
+                    blob_size: (image_bytes > 0).then_some(image_bytes as i64),
+                    files_meta: None,
                 })
                 .unwrap();
             self.db()

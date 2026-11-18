@@ -49,6 +49,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 pub const STATUS_EVENT: &str = "share-status";
 pub const INVITE_EVENT: &str = "share-invite";
+pub const DOWNLOAD_PROGRESS_EVENT: &str = "share-download-progress";
+pub const DOWNLOAD_CANCELLED: &str = "DOWNLOAD_CANCELLED";
 /// Header color for items first copied on another device, until the app
 /// they came from is found here.
 const RECEIVED_COLOR: &str = "#c64735";
@@ -79,6 +81,10 @@ const SINCE_KEY: &str = "since";
 /// and queued this device's own items.
 const INITIAL_KEY: &str = "initial_sync_done";
 const MB: u64 = 1024 * 1024;
+/// Blobs up to 5MB are downloaded automatically; larger ones wait until pasted or copied.
+pub const AUTO_DOWNLOAD_BYTES: u64 = 5 * MB;
+const THUMB_MAX_DIM: u32 = 240;
+const MAX_THUMB_BYTES: usize = 256 * 1024;
 /// Largest total size of the files in one item. Below the relay's default
 /// blob limit of 64MB.
 pub const MAX_FILES_BYTES: u64 = 128 * MB;
@@ -138,6 +144,8 @@ pub struct ShareState {
     outbox_changed: Condvar,
     secrets: Mutex<Option<Secrets>>,
     invite: Mutex<Option<Arc<AtomicBool>>>,
+    download: Mutex<Option<Arc<AtomicBool>>>,
+    dirs: Mutex<Option<Dirs>>,
 }
 
 impl Default for ShareState {
@@ -151,6 +159,8 @@ impl Default for ShareState {
             outbox_changed: Condvar::new(),
             secrets: Mutex::new(None),
             invite: Mutex::new(None),
+            download: Mutex::new(None),
+            dirs: Mutex::new(None),
         }
     }
 }
@@ -212,6 +222,12 @@ impl ShareState {
 
     fn stop_invite(&self) {
         if let Some(cancel) = self.invite.lock().unwrap().take() {
+            cancel.store(true, Ordering::Relaxed);
+        }
+    }
+
+    pub fn stop_download(&self) {
+        if let Some(cancel) = self.download.lock().unwrap().take() {
             cancel.store(true, Ordering::Relaxed);
         }
     }
@@ -330,6 +346,14 @@ struct Meta {
     /// show the same icon as the device that copied it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     icon: Option<String>,
+    /// Image dimensions in pixels, so deferred images know their aspect ratio.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    width: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    height: Option<u32>,
+    /// A small base64 PNG preview attached when an image exceeds `AUTO_DOWNLOAD_BYTES`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    thumb: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -471,6 +495,20 @@ fn read_icon(path: &str) -> Option<String> {
 fn decode_icon(icon: &str) -> Option<Vec<u8>> {
     let bytes = STANDARD.decode(icon.trim()).ok()?;
     (bytes.len() <= MAX_ICON_BYTES && bytes.starts_with(PNG_MAGIC)).then_some(bytes)
+}
+
+fn make_thumb(png: &[u8]) -> Option<String> {
+    let img = image::load_from_memory_with_format(png, image::ImageFormat::Png).ok()?;
+    let thumb = img.thumbnail(THUMB_MAX_DIM, THUMB_MAX_DIM);
+    let mut out = std::io::Cursor::new(Vec::new());
+    thumb.write_to(&mut out, image::ImageFormat::Png).ok()?;
+    let bytes = out.into_inner();
+    (bytes.len() <= MAX_THUMB_BYTES && bytes.starts_with(PNG_MAGIC)).then(|| STANDARD.encode(bytes))
+}
+
+fn decode_thumb(thumb: &str) -> Option<Vec<u8>> {
+    let bytes = STANDARD.decode(thumb.trim()).ok()?;
+    (bytes.len() <= MAX_THUMB_BYTES && bytes.starts_with(PNG_MAGIC)).then_some(bytes)
 }
 
 fn clean_name(name: &str) -> Option<String> {
@@ -947,12 +985,29 @@ impl Relay {
             copied_at: Some(item.created_at),
             color: item.app_color.as_deref().and_then(clean_color),
             icon: item.app_icon.as_deref().and_then(read_icon),
+            width: None,
+            height: None,
+            thumb: None,
         };
         let (meta, blob) = match item.kind.as_str() {
             "text" | "link" => (Meta { text: Some(item.content.clone()), ..base }, None),
             "image" => {
                 let bytes = std::fs::read(&item.content).map_err(|_| IMAGE_MISSING)?;
-                (base, Some(bytes))
+                let dims = item
+                    .width
+                    .zip(item.height)
+                    .and_then(|(w, h)| u32::try_from(w).ok().zip(u32::try_from(h).ok()))
+                    .or_else(|| png_size(&bytes));
+                let thumb = (bytes.len() as u64 > AUTO_DOWNLOAD_BYTES).then(|| make_thumb(&bytes)).flatten();
+                (
+                    Meta {
+                        width: dims.map(|(w, _)| w),
+                        height: dims.map(|(_, h)| h),
+                        thumb,
+                        ..base
+                    },
+                    Some(bytes),
+                )
             }
             "files" => {
                 let (files, bytes) = read_files(&item.content)?;
@@ -1022,21 +1077,42 @@ impl Relay {
     }
 
     /// Downloads and opens a change. Images and files are written to disk by
-    /// `into_item`, under the history's file lock.
+    /// `into_item`, under the history's file lock. Blobs larger than
+    /// `AUTO_DOWNLOAD_BYTES` stay on the relay until pasted or copied.
     fn open(&self, change: &Change) -> Result<Opened, ReceiveError> {
         let Head { meta, from, app, copied_at } = self.open_meta(change)?;
+        let defer = change.blob_size.is_some_and(|s| s > 0 && s as u64 > AUTO_DOWNLOAD_BYTES);
         let content = match (meta.kind.as_str(), meta.text, meta.files) {
             ("text" | "link", Some(text), _) if !text.trim().is_empty() => Content::Text(text),
             ("image", _, _) if change.blob_size.is_some() => {
-                let png = self.blob(&change.id)?;
-                let (w, h) = png_size(&png).ok_or_else(|| ReceiveError::Invalid("blob is not a PNG image".into()))?;
-                Content::Png(png, w, h)
+                if defer {
+                    Content::DeferredImage {
+                        thumb: meta.thumb.as_deref().and_then(decode_thumb),
+                        width: meta.width,
+                        height: meta.height,
+                        blob_size: change.blob_size.unwrap_or(0),
+                    }
+                } else {
+                    let png = self.blob(&change.id)?;
+                    let (w, h) = png_size(&png).ok_or_else(|| ReceiveError::Invalid("blob is not a PNG image".into()))?;
+                    Content::Png(png, w, h)
+                }
             }
             ("files", _, Some(files)) if change.blob_size.is_some() => {
-                let blob = self.blob(&change.id)?;
-                let files = split_files(&files, &blob)
-                    .ok_or_else(|| ReceiveError::Invalid("file sizes do not match the blob".into()))?;
-                Content::Files(files)
+                if files.is_empty() {
+                    return Err(ReceiveError::Invalid("no files in meta".into()));
+                }
+                if defer {
+                    Content::DeferredFiles {
+                        files,
+                        blob_size: change.blob_size.unwrap_or(0),
+                    }
+                } else {
+                    let blob = self.blob(&change.id)?;
+                    let files = split_files(&files, &blob)
+                        .ok_or_else(|| ReceiveError::Invalid("file sizes do not match the blob".into()))?;
+                    Content::Files(files)
+                }
             }
             (kind, _, _) => return Err(ReceiveError::Invalid(format!("unsupported item kind {kind:?}"))),
         };
@@ -1058,6 +1134,45 @@ impl Relay {
         let sealed = response.bytes().map_err(|e| ReceiveError::Network(e.to_string()))?;
         self.key.open("blob", id, &sealed).ok_or(ReceiveError::Locked)
     }
+
+    fn blob_with_progress(
+        &self,
+        id: &str,
+        expected: u64,
+        cancel: &AtomicBool,
+        mut on_progress: impl FnMut(u64, u64),
+    ) -> Result<Vec<u8>, String> {
+        use std::io::Read;
+        if cancel.load(Ordering::Relaxed) {
+            return Err(DOWNLOAD_CANCELLED.into());
+        }
+        let mut response = self
+            .http
+            .send(self.http.get(&format!("/v1/items/{id}/blob")).timeout(Duration::from_secs(600)))?;
+        let total = response.content_length().unwrap_or(expected).max(expected);
+        let mut sealed = Vec::with_capacity(usize::try_from(total).unwrap_or(0));
+        let mut buf = [0u8; 64 * 1024];
+        let mut last_emit = Instant::now();
+        loop {
+            if cancel.load(Ordering::Relaxed) {
+                return Err(DOWNLOAD_CANCELLED.into());
+            }
+            let n = response
+                .read(&mut buf)
+                .map_err(|e| format!("서버에서 파일을 받지 못했어요. ({e})"))?;
+            if n == 0 {
+                break;
+            }
+            sealed.extend_from_slice(&buf[..n]);
+            if last_emit.elapsed() >= Duration::from_millis(40) {
+                on_progress(sealed.len() as u64, total.max(sealed.len() as u64));
+                last_emit = Instant::now();
+            }
+        }
+        let loaded = sealed.len() as u64;
+        on_progress(loaded, total.max(loaded));
+        self.key.open("blob", id, &sealed).ok_or_else(|| KEY_MISMATCH.into())
+    }
 }
 
 /// A change's envelope, opened.
@@ -1071,7 +1186,17 @@ struct Head {
 enum Content {
     Text(String),
     Png(Vec<u8>, u32, u32),
+    DeferredImage {
+        thumb: Option<Vec<u8>>,
+        width: Option<u32>,
+        height: Option<u32>,
+        blob_size: i64,
+    },
     Files(Vec<(String, Vec<u8>)>),
+    DeferredFiles {
+        files: Vec<FileMeta>,
+        blob_size: i64,
+    },
 }
 
 struct Opened {
@@ -1090,11 +1215,66 @@ impl Opened {
     /// own look; others show the app they came from when it is installed
     /// here too, else the icon and color the copying device sent, else the
     /// device they came from.
-    fn into_item(self, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
+    fn into_item(self, sync_id: &str, dirs: &Dirs, icons: &mut AppIconCache, own_name: Option<&str>) -> Option<NewItem> {
         let mut item = match self.content {
             Content::Text(text) => clipboard::text_item(text),
             Content::Png(png, w, h) => clipboard::received_png_item(&dirs.images, &png, w, h)?,
+            Content::DeferredImage { thumb, width, height, blob_size } => {
+                let content = match thumb {
+                    Some(bytes) => {
+                        let path = dirs.images.join(format!("thumb-{sync_id}.png"));
+                        if path.exists() || std::fs::write(&path, &bytes).is_ok() {
+                            path.to_string_lossy().into_owned()
+                        } else {
+                            String::new()
+                        }
+                    }
+                    None => String::new(),
+                };
+                let preview = match (width, height) {
+                    (Some(w), Some(h)) => format!("{w} × {h} 이미지"),
+                    _ => "이미지".into(),
+                };
+                NewItem {
+                    kind: "image".into(),
+                    content,
+                    preview,
+                    hash: format!("pending:{sync_id}"),
+                    source_app: None,
+                    app_icon: None,
+                    app_color: None,
+                    width: width.map(i64::from),
+                    height: height.map(i64::from),
+                    size: blob_size,
+                    origin_device: None,
+                    concealed: false,
+                    blob_pending: true,
+                    blob_size: Some(blob_size),
+                    files_meta: None,
+                }
+            }
             Content::Files(files) => clipboard::received_files_item(&dirs.files, &files)?,
+            Content::DeferredFiles { files, blob_size } => {
+                let total: i64 = files.iter().map(|f| f.size as i64).sum();
+                let preview = files.iter().map(|f| f.name.as_str()).collect::<Vec<_>>().join("\n");
+                NewItem {
+                    kind: "files".into(),
+                    content: "[]".into(),
+                    preview,
+                    hash: format!("pending:{sync_id}"),
+                    source_app: None,
+                    app_icon: None,
+                    app_color: None,
+                    width: None,
+                    height: None,
+                    size: files.len() as i64,
+                    origin_device: None,
+                    concealed: false,
+                    blob_pending: true,
+                    blob_size: Some(if total > 0 { total } else { blob_size }),
+                    files_meta: serde_json::to_string(&files).ok(),
+                }
+            }
         };
         let look = self.app.as_deref().and_then(|app| icons.look_by_name(app));
         item.source_app = self.app.clone().or_else(|| Some(self.from.clone()));
@@ -1332,6 +1512,87 @@ pub async fn set_share_name(app: AppHandle, name: String) -> Result<String, Stri
     .await
 }
 
+#[derive(Clone, Serialize)]
+pub struct DownloadProgress {
+    pub id: i64,
+    pub loaded: u64,
+    pub total: u64,
+}
+
+#[tauri::command]
+pub fn cancel_download(state: tauri::State<ShareState>) {
+    state.stop_download();
+}
+
+/// Downloads a deferred (>5MB) item's blob from the relay with progress
+/// events, decrypts it, saves it to local storage, and clears `blob_pending`.
+pub fn ensure_downloaded(app: &AppHandle, item: &Item) -> Result<Item, String> {
+    if !item.blob_pending {
+        return Ok(item.clone());
+    }
+    let state = app.state::<ShareState>();
+    let dirs = state
+        .dirs
+        .lock()
+        .unwrap()
+        .clone()
+        .ok_or("저장 폴더가 준비되지 않았어요.")?;
+    let cancel = Arc::new(AtomicBool::new(false));
+    if let Some(prev) = state.download.lock().unwrap().replace(cancel.clone()) {
+        prev.store(true, Ordering::Relaxed);
+    }
+    struct ClearDownload<'a>(&'a ShareState, &'a Arc<AtomicBool>);
+    impl Drop for ClearDownload<'_> {
+        fn drop(&mut self) {
+            let mut guard = self.0.download.lock().unwrap();
+            if guard.as_ref().is_some_and(|c| Arc::ptr_eq(c, self.1)) {
+                *guard = None;
+            }
+        }
+    }
+    let _clear = ClearDownload(&state, &cancel);
+
+    let relay = connected(app)?;
+    let expected = item.blob_size.unwrap_or(0).max(0) as u64;
+    let item_id = item.id;
+    let _ = app.emit(
+        DOWNLOAD_PROGRESS_EVENT,
+        DownloadProgress { id: item_id, loaded: 0, total: expected },
+    );
+    let blob = relay.blob_with_progress(&item.sync_id, expected, &cancel, |loaded, total| {
+        let _ = app.emit(
+            DOWNLOAD_PROGRESS_EVENT,
+            DownloadProgress { id: item_id, loaded, total },
+        );
+    })?;
+
+    let db = app.state::<Db>();
+    let new_item = match item.kind.as_str() {
+        "image" => {
+            let (w, h) = png_size(&blob).ok_or("받은 이미지 형식이 올바르지 않아요.")?;
+            let _files = db.1.lock().unwrap();
+            clipboard::received_png_item(&dirs.images, &blob, w, h)
+                .ok_or("받은 이미지를 저장하지 못했어요.")?
+        }
+        "files" => {
+            let files_json = item.files_meta.as_deref().ok_or("파일 목록 정보가 없어요.")?;
+            let files: Vec<FileMeta> =
+                serde_json::from_str(files_json).map_err(|_| "파일 목록을 읽지 못했어요.")?;
+            let split = split_files(&files, &blob).ok_or("받은 파일의 크기가 맞지 않아요.")?;
+            let _files = db.1.lock().unwrap();
+            clipboard::received_files_item(&dirs.files, &split)
+                .ok_or("받은 파일을 저장하지 못했어요.")?
+        }
+        _ => return Err("다운로드할 수 없는 항목이에요.".into()),
+    };
+    let updated = db
+        .complete_blob(&item.sync_id, new_item)
+        .map_err(|e| e.to_string())?
+        .ok_or("항목이 이미 삭제되었어요.")?;
+    let _ = app.emit(CHANGED_EVENT, ());
+    Ok(updated)
+}
+
 /// Deletes the history on the relay, for every device. Nothing to do when
 /// this device is not connected.
 pub fn clear_remote(app: &AppHandle) -> Result<(), String> {
@@ -1358,6 +1619,7 @@ fn refresh_connected(app: &AppHandle, relay: &Relay) {
 // Sync
 
 /// Where received images and files are written, and app icons are cached.
+#[derive(Clone)]
 struct Dirs {
     images: PathBuf,
     files: PathBuf,
@@ -1365,12 +1627,13 @@ struct Dirs {
 }
 
 pub fn start(app: AppHandle, images_dir: PathBuf, files_dir: PathBuf, icons_dir: PathBuf) {
+    let dirs = Dirs { images: images_dir, files: files_dir, icons: icons_dir };
+    *app.state::<ShareState>().dirs.lock().unwrap() = Some(dirs.clone());
     let pusher = app.clone();
     std::thread::Builder::new()
         .name("share-push".into())
         .spawn(move || push_loop(pusher))
         .expect("spawn share pusher");
-    let dirs = Dirs { images: images_dir, files: files_dir, icons: icons_dir };
     std::thread::Builder::new()
         .name("share-pull".into())
         .spawn(move || pull_loop(app, dirs))
@@ -1379,6 +1642,9 @@ pub fn start(app: AppHandle, images_dir: PathBuf, files_dir: PathBuf, icons_dir:
 
 /// Whether a queued item leaves this device at all.
 fn syncable(item: &Item, policy: &Policy) -> bool {
+    if item.blob_pending {
+        return false;
+    }
     if item.concealed && !policy.sync_concealed {
         return false;
     }
@@ -1620,7 +1886,7 @@ fn pull_loop(app: AppHandle, dirs: Dirs) {
 /// so it can be pasted right away without opening the panel.
 fn put_on_clipboard(app: &AppHandle, db: &Db, sync_id: &str) {
     let Ok(Some(item)) = db.get_by_sync_id(sync_id) else { return };
-    if item.concealed || crate::db::now_ms() - item.created_at > FRESH_MS {
+    if item.concealed || item.blob_pending || crate::db::now_ms() - item.created_at > FRESH_MS {
         return;
     }
     let Some(hash) = db.hash_of(item.id) else { return };
@@ -1651,7 +1917,7 @@ fn apply(app: &AppHandle, relay: &Relay, db: &Db, change: &Change, dirs: &Dirs, 
     let applied = {
         let _files = db.1.lock().unwrap();
         let item = opened
-            .into_item(dirs, icons, relay.name.as_deref())
+            .into_item(&change.id, dirs, icons, relay.name.as_deref())
             .ok_or_else(|| ReceiveError::Network("받은 이미지나 파일을 저장하지 못했어요.".into()))?;
         drop(_files);
         db.apply_remote(&change.id, item, copied_at).map_err(|e| ReceiveError::Network(e.to_string()))?
@@ -1765,6 +2031,9 @@ mod tests {
             copied_at: Some(1_761_400_000_000),
             color: Some("#3b5bdb".into()),
             icon: Some(STANDARD.encode(tiny_png())),
+            width: None,
+            height: None,
+            thumb: None,
         };
         let meta_json = serde_json::to_string(&meta).unwrap();
         let blob = b"abc\x00\x01\x02\xff".to_vec();
@@ -1857,13 +2126,18 @@ mod tests {
             from: Some("집 맥".into()), app: Some("Notes".into()), copied_at: Some(1_700_000_000_000),
             color: Some("#1f8fff".into()),
             icon: Some(STANDARD.encode(tiny_png())),
+            width: None, height: None, thumb: None,
         };
-        let image = Meta { v: 2, kind: "image".into(), text: None, files: None, from: None, app: None, copied_at: None, color: None, icon: None };
+        let image = Meta {
+            v: 2, kind: "image".into(), text: None, files: None, from: None, app: None,
+            copied_at: None, color: None, icon: None, width: None, height: None, thumb: None,
+        };
         assert_eq!(serde_json::to_string(&image).unwrap(), r#"{"v":2,"kind":"image"}"#);
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&text).unwrap()).unwrap();
         assert_eq!(restored, text);
         let files = Meta {
             v: 2, kind: "files".into(), text: None, from: None, app: None, copied_at: None, color: None, icon: None,
+            width: None, height: None, thumb: None,
             files: Some(vec![FileMeta { name: "보고서.pdf".into(), size: 3 }]),
         };
         let restored: Meta = serde_json::from_str(&serde_json::to_string(&files).unwrap()).unwrap();
@@ -1926,6 +2200,7 @@ mod tests {
             id: 1, kind: kind.into(), content: content.into(), preview: String::new(), source_app: None,
             app_icon: None, app_color: None, width: None, height: None, size: 0, created_at: 0, og_title: None,
             og_image: None, og_icon: None, origin_device: None, sync_id: crate::db::new_sync_id(), concealed,
+            blob_pending: false, blob_size: None, files_meta: None,
         }
     }
 
@@ -1951,6 +2226,103 @@ mod tests {
             .unwrap();
         assert_eq!(png_size(&png), Some((3, 2)));
         assert_eq!(png_size(b"<script>"), None);
+    }
+
+    #[test]
+    fn thumbnails_scale_down_and_large_items_defer_blob_download() {
+        let mut big_png = Vec::new();
+        image::RgbaImage::from_pixel(600, 300, image::Rgba([255, 102, 82, 255]))
+            .write_to(&mut std::io::Cursor::new(&mut big_png), image::ImageFormat::Png)
+            .unwrap();
+        let thumb_b64 = make_thumb(&big_png).unwrap();
+        let thumb_bytes = decode_thumb(&thumb_b64).unwrap();
+        assert_eq!(png_size(&thumb_bytes), Some((240, 120)));
+        assert_eq!(decode_thumb("not-base64"), None);
+        assert_eq!(decode_thumb(&STANDARD.encode(b"GIF89a...")), None);
+
+        let key_text = generate_key();
+        let key = Key::parse(&key_text).unwrap();
+        let relay = Relay::new(
+            &ShareConfig { name: "회사 맥".into(), server: "http://127.0.0.1:1".into(), device_id: "d1".into() },
+            &Secrets { token: "t".into(), key: key_text },
+        )
+        .unwrap();
+
+        let dir = std::env::temp_dir().join(format!("pinchy-defer-{}-{}", std::process::id(), crate::db::now_ms()));
+        let dirs = Dirs { images: dir.join("images"), files: dir.join("files"), icons: dir.join("icons") };
+        std::fs::create_dir_all(&dirs.images).unwrap();
+        std::fs::create_dir_all(&dirs.icons).unwrap();
+        let mut icons = AppIconCache::new(dirs.icons.clone());
+
+        // >5MB image defers blob download and stores its mini-thumbnail locally.
+        let img_id = crate::db::new_sync_id();
+        let img_meta = Meta {
+            v: 2,
+            kind: "image".into(),
+            text: None,
+            files: None,
+            from: Some("집 맥".into()),
+            app: Some("Preview".into()),
+            copied_at: Some(1_700_000_000_000),
+            color: None,
+            icon: None,
+            width: Some(3840),
+            height: Some(2160),
+            thumb: Some(thumb_b64.clone()),
+        };
+        let img_change = Change {
+            id: img_id.clone(),
+            seq: 1,
+            origin: "d2".into(),
+            updated_at: 1_700_000_000_000,
+            deleted: false,
+            envelope: Some(STANDARD.encode(key.seal("meta", &img_id, &serde_json::to_vec(&img_meta).unwrap()))),
+            blob_size: Some((AUTO_DOWNLOAD_BYTES + 1024) as i64),
+        };
+        let opened_img = relay.open(&img_change).ok().unwrap();
+        let img_item = opened_img.into_item(&img_id, &dirs, &mut icons, Some("회사 맥")).unwrap();
+        assert!(img_item.blob_pending);
+        assert_eq!(img_item.width, Some(3840));
+        assert_eq!(img_item.height, Some(2160));
+        assert_eq!(std::fs::read(&img_item.content).unwrap(), thumb_bytes);
+
+        // >5MB files item defers blob download and retains file list metadata.
+        let files_id = crate::db::new_sync_id();
+        let files_meta = Meta {
+            v: 2,
+            kind: "files".into(),
+            text: None,
+            files: Some(vec![FileMeta { name: "video.mp4".into(), size: 8_000_000 }]),
+            from: Some("집 맥".into()),
+            app: Some("Finder".into()),
+            copied_at: Some(1_700_000_000_001),
+            color: None,
+            icon: None,
+            width: None,
+            height: None,
+            thumb: None,
+        };
+        let files_change = Change {
+            id: files_id.clone(),
+            seq: 2,
+            origin: "d2".into(),
+            updated_at: 1_700_000_000_001,
+            deleted: false,
+            envelope: Some(STANDARD.encode(key.seal("meta", &files_id, &serde_json::to_vec(&files_meta).unwrap()))),
+            blob_size: Some(8_000_040),
+        };
+        let opened_files = relay.open(&files_change).ok().unwrap();
+        let files_item = opened_files.into_item(&files_id, &dirs, &mut icons, Some("회사 맥")).unwrap();
+        assert!(files_item.blob_pending);
+        assert_eq!(files_item.blob_size, Some(8_000_000));
+        assert!(files_item.files_meta.as_deref().unwrap().contains("video.mp4"));
+
+        let mut pending_sync = item("files", "[]", false);
+        pending_sync.blob_pending = true;
+        let policy = Policy { retention_days: 30, max_storage_mb: 10240, max_blob_mb: 128, sync_concealed: false, usage: None };
+        assert!(!syncable(&pending_sync, &policy), "deferred items are not pushed back to the relay");
+
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     /// Talks to a fresh relay. Start one with an empty data directory, then:
@@ -2028,7 +2400,7 @@ mod tests {
             .iter()
             .map(|c| {
                 let o = b.open(c).ok().unwrap();
-                (o.copied_at, o.into_item(&dirs, &mut icons, Some("회사 노트북")).unwrap())
+                (o.copied_at, o.into_item(&c.id, &dirs, &mut icons, Some("회사 노트북")).unwrap())
             })
             .collect();
         assert_eq!(opened[0].0, 1_700_000_000_000);

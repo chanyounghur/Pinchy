@@ -26,6 +26,12 @@ pub struct Item {
     pub sync_id: String,
     /// The source app marked the copy as concealed (a password manager).
     pub concealed: bool,
+    /// True when a large (>5MB) remote blob has not been downloaded yet.
+    pub blob_pending: bool,
+    /// Total byte size of the remote/local blob when known (images/files).
+    pub blob_size: Option<i64>,
+    /// JSON array of `{ name, size }` for `files` items.
+    pub files_meta: Option<String>,
 }
 
 pub struct NewItem {
@@ -41,6 +47,9 @@ pub struct NewItem {
     pub size: i64,
     pub origin_device: Option<String>,
     pub concealed: bool,
+    pub blob_pending: bool,
+    pub blob_size: Option<i64>,
+    pub files_meta: Option<String>,
 }
 
 /// What a remote change did to the local history.
@@ -77,7 +86,7 @@ impl Op {
 }
 
 const COLUMNS: &str =
-    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image, origin_device, sync_id, concealed, og_icon";
+    "id, kind, content, preview, source_app, app_icon, app_color, width, height, size, created_at, og_title, og_image, origin_device, sync_id, concealed, og_icon, blob_pending, blob_size, files_meta";
 
 fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
     Ok(Item {
@@ -98,6 +107,9 @@ fn row_to_item(r: &Row) -> rusqlite::Result<Item> {
         sync_id: r.get(14)?,
         concealed: r.get::<_, Option<bool>>(15)?.unwrap_or(false),
         og_icon: r.get(16)?,
+        blob_pending: r.get::<_, Option<bool>>(17)?.unwrap_or(false),
+        blob_size: r.get(18)?,
+        files_meta: r.get(19)?,
     })
 }
 
@@ -143,6 +155,9 @@ impl Db {
             ("sync_id", "TEXT"),
             ("concealed", "INTEGER"),
             ("og_icon", "TEXT"),
+            ("blob_pending", "INTEGER"),
+            ("blob_size", "INTEGER"),
+            ("files_meta", "TEXT"),
         ] {
             let exists: bool = conn
                 .prepare("SELECT 1 FROM pragma_table_info('items') WHERE name = ?1")?
@@ -185,9 +200,12 @@ impl Db {
                        app_icon = COALESCE(?3, app_icon),
                        app_color = COALESCE(?4, app_color),
                        origin_device = COALESCE(?5, origin_device),
-                       concealed = COALESCE(concealed, 0) AND ?6
-                     WHERE id = ?7",
-                    params![now, item.source_app, item.app_icon, item.app_color, item.origin_device, item.concealed, id],
+                       concealed = COALESCE(concealed, 0) AND ?6,
+                       blob_pending = 0,
+                       blob_size = COALESCE(?7, blob_size),
+                       files_meta = COALESCE(?8, files_meta)
+                     WHERE id = ?9",
+                    params![now, item.source_app, item.app_icon, item.app_color, item.origin_device, item.concealed, item.blob_size, item.files_meta, id],
                 )?;
                 Self::queue(&conn, &sync_id, Op::Upsert)?;
                 Ok((id, false))
@@ -195,8 +213,8 @@ impl Db {
             None => {
                 let sync_id = new_sync_id();
                 conn.execute(
-                    "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at, origin_device, sync_id, concealed)
-                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                    "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at, origin_device, sync_id, concealed, blob_pending, blob_size, files_meta)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
                     params![
                         item.kind,
                         item.content,
@@ -211,7 +229,10 @@ impl Db {
                         now,
                         item.origin_device,
                         sync_id,
-                        item.concealed
+                        item.concealed,
+                        item.blob_pending,
+                        item.blob_size,
+                        item.files_meta
                     ],
                 )?;
                 let id = conn.last_insert_rowid();
@@ -266,8 +287,8 @@ impl Db {
             return Ok(Applied { changed: copied_at > created_at, delete_remote: Some(drop), push });
         }
         conn.execute(
-            "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at, origin_device, sync_id, concealed)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0)",
+            "INSERT INTO items (kind, content, preview, hash, source_app, app_icon, app_color, width, height, size, created_at, origin_device, sync_id, concealed, blob_pending, blob_size, files_meta)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, 0, ?14, ?15, ?16)",
             params![
                 item.kind,
                 item.content,
@@ -281,10 +302,51 @@ impl Db {
                 item.size,
                 copied_at,
                 item.origin_device,
-                sync_id
+                sync_id,
+                item.blob_pending,
+                item.blob_size,
+                item.files_meta
             ],
         )?;
         Ok(Applied { changed: true, ..Applied::default() })
+    }
+
+    /// Replaces a deferred item's placeholder metadata with the downloaded
+    /// local file/image paths and hash, removing any temporary thumbnail.
+    pub fn complete_blob(&self, sync_id: &str, downloaded: NewItem) -> rusqlite::Result<Option<Item>> {
+        let _files = self.1.lock().unwrap();
+        let conn = self.0.lock().unwrap();
+        let Some(current) = conn
+            .query_row(&format!("SELECT {COLUMNS} FROM items WHERE sync_id = ?1"), params![sync_id], row_to_item)
+            .optional()?
+        else {
+            return Ok(None);
+        };
+        conn.execute("DELETE FROM items WHERE hash = ?1 AND id != ?2", params![downloaded.hash, current.id])?;
+        conn.execute(
+            "UPDATE items SET content = ?1, preview = ?2, hash = ?3,
+               width = COALESCE(?4, width), height = COALESCE(?5, height),
+               size = ?6, blob_pending = 0,
+               blob_size = COALESCE(?7, blob_size),
+               files_meta = COALESCE(?8, files_meta)
+             WHERE id = ?9",
+            params![
+                downloaded.content,
+                downloaded.preview,
+                downloaded.hash,
+                downloaded.width,
+                downloaded.height,
+                downloaded.size,
+                downloaded.blob_size,
+                downloaded.files_meta,
+                current.id
+            ],
+        )?;
+        if current.kind == "image" && !current.content.is_empty() && current.content != downloaded.content {
+            let _ = std::fs::remove_file(&current.content);
+        }
+        conn.query_row(&format!("SELECT {COLUMNS} FROM items WHERE id = ?1"), params![current.id], row_to_item)
+            .optional()
     }
 
     /// Applies a recopy of an item this device already has, without its
@@ -395,10 +457,10 @@ impl Db {
             .optional()
     }
 
-    /// Every image row's id and file path.
+    /// Every completed image row's id and file path.
     pub fn image_rows(&self) -> rusqlite::Result<Vec<(i64, String)>> {
         let conn = self.0.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, content FROM items WHERE kind = 'image'")?;
+        let mut stmt = conn.prepare("SELECT id, content FROM items WHERE kind = 'image' AND COALESCE(blob_pending, 0) = 0 AND content != ''")?;
         let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
         rows.collect()
     }
@@ -564,7 +626,8 @@ mod tests {
         NewItem { kind: "link".into(), content: "https://example.com".into(),
             preview: "https://example.com".into(), hash: "test-link".into(),
             source_app: None, app_icon: None, app_color: None,
-            width: None, height: None, size: 19, origin_device: None, concealed: false }
+            width: None, height: None, size: 19, origin_device: None, concealed: false,
+            blob_pending: false, blob_size: None, files_meta: None }
     }
 
     fn text(content: &str) -> NewItem {
@@ -716,5 +779,66 @@ mod tests {
         db.delete(item.id).unwrap();
         db.save_link_preview(&item, Some("Late response"), None, None).unwrap();
         assert!(db.list("", 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn deferred_blobs_stay_pending_until_completed_and_clean_up_thumbnails() {
+        let dir = std::env::temp_dir().join(format!("pinchy-deferred-{}-{}", std::process::id(), now_ms()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let db = Db::open(&dir.join("test.db")).unwrap();
+        let thumb_path = dir.join("thumb-aaa.png");
+        let full_path = dir.join("full.png");
+        std::fs::write(&thumb_path, b"thumb").unwrap();
+        std::fs::write(&full_path, b"full").unwrap();
+
+        let sync_id = "a".repeat(32);
+        let deferred = NewItem {
+            kind: "image".into(),
+            content: thumb_path.to_string_lossy().into_owned(),
+            preview: "3840 × 2160 이미지".into(),
+            hash: format!("pending:{sync_id}"),
+            source_app: Some("Preview".into()),
+            app_icon: None,
+            app_color: None,
+            width: Some(3840),
+            height: Some(2160),
+            size: 12_000_000,
+            origin_device: Some("집 맥".into()),
+            concealed: false,
+            blob_pending: true,
+            blob_size: Some(12_000_000),
+            files_meta: None,
+        };
+        db.apply_remote(&sync_id, deferred, 1_000).unwrap();
+        let row = db.get_by_sync_id(&sync_id).unwrap().unwrap();
+        assert!(row.blob_pending);
+        assert_eq!(row.blob_size, Some(12_000_000));
+        assert!(thumb_path.exists());
+
+        let downloaded = NewItem {
+            kind: "image".into(),
+            content: full_path.to_string_lossy().into_owned(),
+            preview: "3840 × 2160 이미지".into(),
+            hash: "real-sha256".into(),
+            source_app: None,
+            app_icon: None,
+            app_color: None,
+            width: Some(3840),
+            height: Some(2160),
+            size: 12_000_000,
+            origin_device: None,
+            concealed: false,
+            blob_pending: false,
+            blob_size: Some(12_000_000),
+            files_meta: None,
+        };
+        let completed = db.complete_blob(&sync_id, downloaded).unwrap().unwrap();
+        assert!(!completed.blob_pending);
+        assert_eq!(completed.content, full_path.to_string_lossy());
+        assert!(!thumb_path.exists(), "temporary thumbnail is removed after completion");
+        assert!(full_path.exists());
+
+        drop(db);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

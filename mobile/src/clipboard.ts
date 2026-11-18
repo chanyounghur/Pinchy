@@ -99,6 +99,22 @@ export async function toPng(uri: string, mimeType: string): Promise<Uint8Array> 
   return bytes;
 }
 
+/// Builds a small base64 PNG preview (longest side 240px) for large images.
+export async function makeThumb(uri: string, size?: { width: number; height: number } | null): Promise<string | undefined> {
+  try {
+    const context = ImageManipulator.manipulate(uri);
+    context.resize(size && size.height > size.width ? { height: 240 } : { width: 240 });
+    const rendered = await context.renderAsync();
+    const saved = await rendered.saveAsync({ format: SaveFormat.PNG });
+    const bytes = await new File(saved.uri).bytes();
+    try {
+      new File(saved.uri).delete();
+    } catch {}
+    if (bytes.length <= 256 * 1024) return encodeBase64(bytes);
+  } catch {}
+  return undefined;
+}
+
 function dataUriBytes(data: string): Uint8Array | null {
   const comma = data.indexOf(",");
   return decodeBase64(comma >= 0 ? data.slice(comma + 1) : data);

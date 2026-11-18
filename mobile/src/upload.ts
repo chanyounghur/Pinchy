@@ -3,10 +3,10 @@
 // so it shows up before the change feed echoes it back.
 
 import * as Crypto from "expo-crypto";
-import { encodeMeta, type FileMeta, type Kind } from "./protocol/meta";
-import { concatFiles } from "./protocol/meta";
+import { AUTO_DOWNLOAD_BYTES, concatFiles, encodeMeta, type FileMeta, type Kind, type Meta } from "./protocol/meta";
 import type { SyncEngine } from "./sync";
 import { pngSize, writeFiles, writeImage } from "./blobs";
+import { makeThumb } from "./clipboard";
 
 export interface Draft {
   kind: Kind;
@@ -46,7 +46,12 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
   const now = Date.now();
   const files: FileMeta[] | undefined = draft.files?.map((f) => ({ name: f.name, size: f.bytes.length }));
   const blob = draft.kind === "image" ? draft.png : draft.kind === "files" && draft.files ? concatFiles(draft.files.map((f) => f.bytes)) : undefined;
-  const meta = {
+  const size = draft.kind === "image" && draft.png ? pngSize(draft.png) : null;
+  const thumb =
+    draft.kind === "image" && draft.png && draft.png.length > AUTO_DOWNLOAD_BYTES && draft.preview
+      ? await makeThumb(draft.preview, size)
+      : undefined;
+  const meta: Meta = {
     v: 2,
     kind: draft.kind,
     text: draft.kind === "text" || draft.kind === "link" ? draft.text : undefined,
@@ -54,6 +59,9 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
     from: deviceName,
     app: draft.app,
     copied_at: now,
+    width: size?.width,
+    height: size?.height,
+    thumb,
   };
   const envelope = engine.key.seal("meta", id, encodeMeta(meta));
   const result = await engine.relay.putItem(id, envelope, blob !== undefined);
@@ -62,9 +70,7 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
     await engine.relay.uploadBlob(id, engine.key.seal("blob", id, blob));
   }
   // Keep a local copy so the item appears at once and its blob is not re-downloaded.
-  let size: { width: number; height: number } | null = null;
   if (draft.kind === "image" && draft.png) {
-    size = pngSize(draft.png);
     await writeImage(id, draft.png);
   } else if (draft.kind === "files" && files && blob) {
     await writeFiles(id, files, blob);
@@ -86,6 +92,7 @@ export async function upload(engine: SyncEngine, deviceName: string, draft: Draf
     blob_state: blob ? "ready" : "none",
     width: size?.width ?? null,
     height: size?.height ?? null,
+    thumb: thumb ?? null,
   });
   engine.poke();
   return id;

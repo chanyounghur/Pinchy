@@ -187,6 +187,9 @@ fn png_item(images_dir: &Path, bytes: &[u8], w: u32, h: u32, hash: String) -> Op
         size: bytes.len() as i64,
         origin_device: None,
         concealed: false,
+        blob_pending: false,
+        blob_size: Some(bytes.len() as i64),
+        files_meta: None,
     })
 }
 
@@ -207,6 +210,9 @@ pub fn text_item(text: String) -> NewItem {
         height: None,
         origin_device: None,
         concealed: false,
+        blob_pending: false,
+        blob_size: None,
+        files_meta: None,
     }
 }
 
@@ -236,16 +242,30 @@ pub fn received_files_item(files_dir: &Path, files: &[(String, Vec<u8>)]) -> Opt
     Some(files_item(paths.iter().map(|p| p.to_string_lossy().into_owned()).collect()))
 }
 
+#[derive(serde::Serialize)]
+struct FileEntryMeta {
+    name: String,
+    size: u64,
+}
+
 fn files_item(files: Vec<String>) -> NewItem {
-    let names: Vec<String> = files
-        .iter()
-        .map(|f| {
-            std::path::Path::new(f)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_else(|| f.clone())
-        })
-        .collect();
+    let mut names = Vec::with_capacity(files.len());
+    let mut entries = Vec::with_capacity(files.len());
+    let mut total_bytes: u64 = 0;
+    for f in &files {
+        let name = std::path::Path::new(f)
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| f.clone());
+        let size = std::fs::metadata(f)
+            .ok()
+            .filter(|m| m.is_file())
+            .map(|m| m.len())
+            .unwrap_or(0);
+        total_bytes = total_bytes.saturating_add(size);
+        names.push(name.clone());
+        entries.push(FileEntryMeta { name, size });
+    }
     let joined = files.join("\n");
     NewItem {
         kind: "files".into(),
@@ -260,6 +280,9 @@ fn files_item(files: Vec<String>) -> NewItem {
         height: None,
         origin_device: None,
         concealed: false,
+        blob_pending: false,
+        blob_size: (total_bytes > 0).then_some(total_bytes as i64),
+        files_meta: serde_json::to_string(&entries).ok(),
     }
 }
 

@@ -9,6 +9,7 @@ import React, { useEffect } from "react";
 import { Pressable, StyleSheet, Text, View } from "react-native";
 import { useApp } from "../app-context";
 import { fileFor, imageFile } from "../blobs";
+import { AUTO_DOWNLOAD_BYTES } from "../protocol/meta";
 import type { Item } from "../store/db";
 import { appColor, bytes, domainOf, initial, isPhotoBundle, kindLabel, relativeTime } from "./format";
 import { radius, useTheme, type Theme } from "./theme";
@@ -39,7 +40,10 @@ export function ItemCard({
 }) {
   const t = useTheme();
   const { engine } = useApp();
-  const needsBlob = (item.kind === "image" || item.kind === "files") && item.blob_state === "missing";
+  const needsBlob =
+    (item.kind === "image" || item.kind === "files") &&
+    item.blob_state === "missing" &&
+    (item.blob_size ?? 0) <= AUTO_DOWNLOAD_BYTES;
   useEffect(() => {
     if (needsBlob && engine) void engine.ensureBlob(item.id);
   }, [needsBlob, engine, item.id]);
@@ -133,9 +137,16 @@ function Body({ item, t, full, photos, onOpenPicture }: { item: Item; t: Theme; 
     case "image": {
       const ratio = item.width && item.height ? item.width / item.height : 16 / 9;
       const height = full ? undefined : Math.min(260, Math.max(90, Math.round(326 / ratio)));
-      return item.blob_state === "ready" ? (
+      const deferred = (item.blob_size ?? 0) > AUTO_DOWNLOAD_BYTES;
+      const sourceUri =
+        item.blob_state === "ready"
+          ? imageFile(item.id).uri
+          : item.thumb && item.blob_state !== "failed"
+            ? `data:image/png;base64,${item.thumb}`
+            : null;
+      return sourceUri ? (
         <Image
-          source={{ uri: imageFile(item.id).uri }}
+          source={{ uri: sourceUri }}
           style={[styles.image, { backgroundColor: t.chip, height, aspectRatio: full ? ratio : undefined }]}
           contentFit="contain"
           transition={120}
@@ -143,7 +154,13 @@ function Body({ item, t, full, photos, onOpenPicture }: { item: Item; t: Theme; 
         />
       ) : (
         <View style={[styles.image, { backgroundColor: t.chip, height: height ?? 160, alignItems: "center", justifyContent: "center" }]}>
-          <Text style={{ color: t.cardMuted, fontSize: 13 }}>{item.blob_state === "failed" ? "이미지를 받지 못했어요" : "받는 중…"}</Text>
+          <Text style={{ color: t.cardMuted, fontSize: 13 }}>
+            {item.blob_state === "failed"
+              ? "이미지를 받지 못했어요"
+              : deferred
+                ? `탭해서 원본 받기 (${bytes(item.blob_size!)})`
+                : "받는 중…"}
+          </Text>
         </View>
       );
     }
@@ -176,7 +193,13 @@ function Body({ item, t, full, photos, onOpenPicture }: { item: Item; t: Theme; 
               );
             })}
             {!ready ? (
-              <Text style={{ color: t.cardMuted, fontSize: 12, width: "100%" }}>{item.blob_state === "failed" ? "사진을 받지 못했어요" : "받는 중…"}</Text>
+              <Text style={{ color: t.cardMuted, fontSize: 12, width: "100%" }}>
+                {item.blob_state === "failed"
+                  ? "사진을 받지 못했어요"
+                  : (item.blob_size ?? 0) > AUTO_DOWNLOAD_BYTES
+                    ? `탭해서 사진 받기 (${bytes(item.blob_size!)})`
+                    : "받는 중…"}
+              </Text>
             ) : null}
           </View>
         );
@@ -212,13 +235,24 @@ function badge(item: Item, photos: boolean): string {
       return `${[...(item.text ?? "")].length}자`;
     case "link":
       return "링크";
-    case "image":
-      return item.width && item.height ? `${item.width}×${item.height}` : item.blob_size ? bytes(item.blob_size) : "이미지";
+    case "image": {
+      const dims = item.width && item.height ? `${item.width}×${item.height}` : null;
+      if (item.blob_state !== "ready" && (item.blob_size ?? 0) > AUTO_DOWNLOAD_BYTES) {
+        return dims ? `${dims} · ↓ ${bytes(item.blob_size!)}` : `↓ ${bytes(item.blob_size!)}`;
+      }
+      return dims ?? (item.blob_size ? bytes(item.blob_size) : "이미지");
+    }
     case "files": {
       const n = item.files?.length ?? 0;
       if (photos) {
         const size = item.files?.reduce((sum, f) => sum + f.size, 0) ?? 0;
-        return `사진 ${n}장 · ${bytes(size)}`;
+        return item.blob_state !== "ready" && (item.blob_size ?? 0) > AUTO_DOWNLOAD_BYTES
+          ? `사진 ${n}장 · ↓ ${bytes(size)}`
+          : `사진 ${n}장 · ${bytes(size)}`;
+      }
+      if (item.blob_state !== "ready" && item.blob_size) {
+        const prefix = item.blob_size > AUTO_DOWNLOAD_BYTES ? "↓ " : "";
+        return `파일 ${n}개 · ${prefix}${bytes(item.blob_size)}`;
       }
       return `파일 ${n}개`;
     }

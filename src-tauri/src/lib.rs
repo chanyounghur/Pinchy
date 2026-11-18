@@ -95,17 +95,35 @@ fn list_items(db: State<Db>, query: Option<String>, limit: Option<i64>) -> Resul
 }
 
 #[tauri::command]
-fn paste_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
-    let item = db.get(id).map_err(|e| e.to_string())?.ok_or("item not found")?;
-    paste::paste(&app, &item)
+async fn paste_item(app: AppHandle, id: i64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = app.state::<Db>().get(id).map_err(|e| e.to_string())?.ok_or("item not found")?;
+        let item = if item.blob_pending {
+            share::ensure_downloaded(&app, &item)?
+        } else {
+            item
+        };
+        paste::paste(&app, &item)
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
-fn copy_item(app: AppHandle, db: State<Db>, id: i64) -> Result<(), String> {
-    let item = db.get(id).map_err(|e| e.to_string())?.ok_or("item not found")?;
-    paste::copy_to_clipboard(&item)?;
-    panel::hide(&app);
-    Ok(())
+async fn copy_item(app: AppHandle, id: i64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let item = app.state::<Db>().get(id).map_err(|e| e.to_string())?.ok_or("item not found")?;
+        let item = if item.blob_pending {
+            share::ensure_downloaded(&app, &item)?
+        } else {
+            item
+        };
+        paste::copy_to_clipboard(&item)?;
+        panel::hide(&app);
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 #[tauri::command]
@@ -271,6 +289,7 @@ pub fn run() {
             share::remove_share_device,
             share::disconnect_share,
             share::set_share_name,
+            share::cancel_download,
             updater::update_status,
             updater::check_update,
             updater::install_update

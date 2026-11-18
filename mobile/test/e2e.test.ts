@@ -109,7 +109,12 @@ test("a phone joins by QR, follows the desktop's history and adds to it", { skip
     assert.equal(ahead.items.length, 0);
     await assert.rejects(new Relay(server, "nope", fetch).me(), /연결이 끊겼어요/);
   } finally {
-    relay.kill();
+    await new Promise<void>((resolve) => {
+      if (relay.exitCode !== null) return resolve();
+      relay.once("exit", () => resolve());
+      relay.kill();
+      setTimeout(resolve, 2000);
+    });
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -197,6 +197,9 @@ export class SyncEngine {
       copied_at: meta.copied_at ?? change.updated_at,
       updated_at: change.updated_at,
       blob_size: change.blob_size ?? null,
+      width: meta.width ?? null,
+      height: meta.height ?? null,
+      thumb: meta.thumb ?? null,
     });
   }
 

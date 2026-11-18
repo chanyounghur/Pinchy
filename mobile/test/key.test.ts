@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { Key, NONCE_LEN } from "../src/protocol/key";
 import { decodeBase64, encodeBase64 } from "../src/protocol/base64";
 import { decodeMeta } from "../src/protocol/meta";
@@ -19,7 +20,7 @@ interface Vectors {
   sealed_label: string;
 }
 
-const vectors: Vectors = JSON.parse(readFileSync(new URL("./vectors.json", import.meta.url).pathname, "utf8"));
+const vectors: Vectors = JSON.parse(readFileSync(fileURLToPath(String(new URL("./vectors.json", import.meta.url))), "utf8"));
 
 test("opens envelopes, blobs and labels sealed by the desktop", () => {
   const key = Key.parse(vectors.key, random);

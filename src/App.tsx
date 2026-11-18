@@ -3,6 +3,17 @@ import { invoke, convertFileSrc, listen } from "./tauri";
 import { createSelectionScroller } from "./selectionScroll";
 import "./App.css";
 
+type FileMeta = {
+  name: string;
+  size: number;
+};
+
+type DownloadProgress = {
+  id: number;
+  loaded: number;
+  total: number;
+};
+
 type Item = {
   id: number;
   kind: "text" | "link" | "image" | "files";
@@ -21,6 +32,9 @@ type Item = {
   origin_device: string | null;
   sync_id: string;
   concealed: boolean;
+  blob_pending: boolean;
+  blob_size: number | null;
+  files_meta: string | null;
 };
 
 const IS_MAC = /Mac/i.test(navigator.platform);
@@ -42,15 +56,61 @@ function timeAgo(ms: number) {
   return `${Math.floor(h / 24)}일 전`;
 }
 
+function formatBytes(bytes: number) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 ** 2) return `${(bytes / 1024).toFixed(bytes < 10 * 1024 ? 1 : 0)}KB`;
+  if (bytes < 1024 ** 3) return `${(bytes / 1024 ** 2).toFixed(1)}MB`;
+  return `${(bytes / 1024 ** 3).toFixed(2)}GB`;
+}
+
+function fileExt(name: string) {
+  const idx = name.lastIndexOf(".");
+  const ext = idx > 0 ? name.slice(idx + 1).trim() : "";
+  return ext ? ext.slice(0, 4).toUpperCase() : "FILE";
+}
+
+function parseFilesMeta(item: Item): FileMeta[] {
+  if (item.files_meta) {
+    try {
+      const parsed = JSON.parse(item.files_meta);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed as FileMeta[];
+    } catch {}
+  }
+  return item.preview
+    .split("\n")
+    .filter(Boolean)
+    .map((name) => ({ name, size: 0 }));
+}
+
 function footerText(item: Item) {
-  if (item.kind === "link") return item.og_title || item.og_image ? "미리보기 저장됨" : linkDomain(item.content);
-  if (item.kind === "image") return `${item.width} × ${item.height}`;
+  if (item.kind === "link") return linkDomain(item.content);
+  if (item.kind === "image") return item.width && item.height ? `${item.width} × ${item.height}` : "이미지";
   if (item.kind === "files") return `파일 ${item.size}개`;
   return `${item.size.toLocaleString()}자`;
 }
 
 function linkDomain(url: string) {
-  try { return new URL(url.trim()).hostname; } catch { return "링크"; }
+  try { return new URL(url.trim()).hostname.replace(/^www\./, ""); } catch { return "링크"; }
+}
+
+function FilesList({ item }: { item: Item }) {
+  const files = parseFilesMeta(item);
+  const shown = files.slice(0, 3);
+  const more = files.length - shown.length;
+  return (
+    <div className="files-list">
+      {shown.map((f, idx) => (
+        <div key={`${f.name}-${idx}`} className="file-row">
+          <span className="file-ext">{fileExt(f.name)}</span>
+          <div className="file-info">
+            <span className="file-name">{f.name}</span>
+            {f.size > 0 && <span className="file-size">{formatBytes(f.size)}</span>}
+          </div>
+        </div>
+      ))}
+      {more > 0 && <div className="file-more">+{more}개 더</div>}
+    </div>
+  );
 }
 
 function LinkPreview({ item }: { item: Item }) {
@@ -98,6 +158,8 @@ export default function App() {
   const [items, setItems] = useState<Item[]>([]);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState(0);
+  const [downloading, setDownloading] = useState<DownloadProgress | null>(null);
+  const [downloadError, setDownloadError] = useState<{ id: number; message: string } | null>(null);
   // The right-click menu: which card and where the pointer was.
   const [menu, setMenu] = useState<{ item: Item; x: number; y: number } | null>(null);
   const menuOpenRef = useRef(false);
@@ -210,9 +272,14 @@ export default function App() {
     window.addEventListener("focus", focusInput);
     const unlisteners = [
       listen("clipboard-changed", () => refresh(query)),
+      listen<DownloadProgress>("share-download-progress", ({ payload }) => {
+        setDownloading(payload);
+      }),
       listen("panel-shown", () => {
         stopScrollingRef.current();
         setMenu(null);
+        setDownloading(null);
+        setDownloadError(null);
         revealSelectionRef.current = true;
         setQuery("");
         setSelected(0);
@@ -258,8 +325,30 @@ export default function App() {
   }, [selected, items]);
 
   const close = () => invoke("hide_panel");
-  const paste = (item: Item | undefined) => item && invoke("paste_item", { id: item.id });
-  const copy = (item: Item | undefined) => item && invoke("copy_item", { id: item.id });
+  const cancelDownload = () => {
+    void invoke("cancel_download");
+    setDownloading(null);
+    setDownloadError(null);
+  };
+  const runTransfer = async (cmd: "paste_item" | "copy_item", item: Item | undefined) => {
+    if (!item) return;
+    setDownloadError(null);
+    if (item.blob_pending) {
+      setDownloading({ id: item.id, loaded: 0, total: item.blob_size ?? item.size ?? 0 });
+    }
+    try {
+      await invoke(cmd, { id: item.id });
+      setDownloading((cur) => (cur?.id === item.id ? null : cur));
+    } catch (e) {
+      setDownloading((cur) => (cur?.id === item.id ? null : cur));
+      const msg = String(e);
+      if (!msg.includes("DOWNLOAD_CANCELLED")) {
+        setDownloadError({ id: item.id, message: msg });
+      }
+    }
+  };
+  const paste = (item: Item | undefined) => void runTransfer("paste_item", item);
+  const copy = (item: Item | undefined) => void runTransfer("copy_item", item);
   const remove = (item: Item | undefined) => item && invoke("delete_item", { id: item.id });
 
   // Any click, scroll or blur outside the menu dismisses it.
@@ -296,7 +385,9 @@ export default function App() {
     switch (e.key) {
       case "Escape":
         e.preventDefault();
-        close();
+        if (downloading) cancelDownload();
+        else if (downloadError) setDownloadError(null);
+        else close();
         break;
       case "ArrowRight":
         e.preventDefault();
@@ -378,28 +469,90 @@ export default function App() {
             <div className="card-head" style={{ background: item.app_color ?? "#8e8e93" }}>
               <div className="card-title">
                 <span className="kind">{KIND_LABEL[item.kind]}</span>
-                <span className="time">{timeAgo(item.created_at)}</span>
+                <span
+                  className="time"
+                  title={item.origin_device ? `${timeAgo(item.created_at)} · ${item.origin_device}` : undefined}
+                >
+                  {timeAgo(item.created_at)}{item.origin_device ? ` · ${item.origin_device}` : ""}
+                </span>
               </div>
               <div className="app-icon">
                 {item.app_icon ? (
                   <img src={convertFileSrc(item.app_icon)} alt="" draggable={false} />
                 ) : (
-                  <span>{(item.source_app ?? "?").slice(0, 1)}</span>
+                  <span>{(item.source_app ?? "?").trim().slice(0, 1).toUpperCase() || "?"}</span>
                 )}
               </div>
             </div>
             <div className={`card-body ${item.kind === "link" ? "link-body" : ""}`}>
               {item.kind === "image" ? (
-                <img src={convertFileSrc(item.content)} alt="" draggable={false} />
+                item.content ? (
+                  <img src={convertFileSrc(item.content)} alt="" draggable={false} />
+                ) : (
+                  <div className="image-placeholder">
+                    <span>{item.width && item.height ? `${item.width} × ${item.height}` : "이미지"}</span>
+                    {item.blob_size ? <small>{formatBytes(item.blob_size)}</small> : null}
+                  </div>
+                )
               ) : item.kind === "link" ? (
                 <LinkPreview item={item} />
+              ) : item.kind === "files" ? (
+                <FilesList item={item} />
               ) : (
                 <pre>{item.preview}</pre>
               )}
+              {downloading?.id === item.id && (() => {
+                const total = downloading.total || item.blob_size || 0;
+                const pct = total > 0 ? Math.min(100, Math.round((downloading.loaded / total) * 100)) : 0;
+                return (
+                  <div className="dl-overlay" onClick={(e) => e.stopPropagation()}>
+                    <div className="dl-title">
+                      {item.origin_device ? `${item.origin_device}에서 받는 중…` : "받는 중…"}
+                    </div>
+                    <div className="dl-size">
+                      {total > 0
+                        ? `${formatBytes(downloading.loaded)} / ${formatBytes(total)}`
+                        : formatBytes(downloading.loaded)}
+                    </div>
+                    <div className="dl-bar">
+                      <div className="dl-bar-fill" style={{ width: `${pct}%` }} />
+                    </div>
+                    <button
+                      type="button"
+                      className="dl-cancel"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        cancelDownload();
+                      }}
+                    >
+                      Esc 취소
+                    </button>
+                  </div>
+                );
+              })()}
+              {downloadError?.id === item.id && downloading?.id !== item.id && (
+                <div className="dl-overlay" onClick={(e) => e.stopPropagation()}>
+                  <div className="dl-title">받지 못했어요</div>
+                  <div className="dl-error">{downloadError.message}</div>
+                  <button
+                    type="button"
+                    className="dl-cancel"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDownloadError(null);
+                    }}
+                  >
+                    닫기
+                  </button>
+                </div>
+              )}
             </div>
             <div className="card-foot">
-              {item.origin_device && <span className="origin" title={`${item.origin_device}에서 복사했어요`}>↓ {item.origin_device}</span>}
-              {item.concealed && <span className="concealed" title="비밀번호 관리자에서 복사한 내용이라 이 기기에만 남아요">숨김</span>}
+              {item.blob_pending ? (
+                <span className="origin" title="붙여넣을 때 서버에서 받아요">↓ {formatBytes(item.blob_size ?? item.size)}</span>
+              ) : item.concealed ? (
+                <span className="concealed" title="비밀번호 관리자에서 복사한 내용이라 이 기기에만 남아요">숨김</span>
+              ) : null}
               <span>{footerText(item)}</span>
               {i < 9 && (
                 <span className="badge">

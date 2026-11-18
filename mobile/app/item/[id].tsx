@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useItemActions } from "@/actions";
 import { useApp, useItem } from "@/app-context";
-import { copyItem, shareFile, shareImage } from "@/clipboard";
+import { copyItem, shareFile } from "@/clipboard";
 import { Button } from "@/ui/Button";
 import { fullTime, kindLabel } from "@/ui/format";
 import { ItemCard } from "@/ui/ItemCard";
@@ -40,18 +40,8 @@ export default function Detail() {
   }, [engine, item, toast]);
 
   const share = useCallback(async () => {
-    if (!item) return;
-    try {
-      if (item.kind === "image") await shareImage(item);
-      else if (item.kind === "files") await shareFile(item, 0);
-      else {
-        const { Share } = await import("react-native");
-        await Share.share({ message: item.text ?? "" });
-      }
-    } catch (e) {
-      toast(e instanceof Error ? e.message : "공유하지 못했어요");
-    }
-  }, [item, toast]);
+    if (item) await actions.share(item);
+  }, [actions, item]);
 
   const remove = useCallback(() => {
     if (item) actions.remove(item, () => router.back());
@@ -89,7 +79,19 @@ export default function Detail() {
             {item.files.map((f, i) => (
               <Pressable
                 key={`${f.name}-${i}`}
-                onPress={() => void shareFile(item, i).catch(() => toast("아직 받는 중이에요"))}
+                onPress={() =>
+                  void (async () => {
+                    try {
+                      if (item.blob_state !== "ready" && (!engine || !(await engine.ensureBlob(item.id)))) {
+                        toast("아직 받는 중이에요");
+                        return;
+                      }
+                      await shareFile(item, i);
+                    } catch (e) {
+                      toast(e instanceof Error ? e.message : "내보내지 못했어요");
+                    }
+                  })()
+                }
                 style={[styles.row, i === item.files!.length - 1 ? null : { borderBottomWidth: 1, borderBottomColor: t.separator }]}
                 accessibilityRole="button"
               >
